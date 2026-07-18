@@ -4,8 +4,8 @@
 </script>
 
 <svelte:head>
-  <title>FieldSelect Admin</title>
-  <meta name="description" content="Mock-first field selection administration console" />
+  <title>Field Selection</title>
+  <meta name="description" content="Student field preference selection" />
 </svelte:head>
 
 {@render children()}

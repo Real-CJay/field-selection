@@ -1,13 +1,19 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { session } from '$lib/stores';
+  import { getStudentSession } from '$lib/session';
 
-  onMount(() => goto($session ? '/admin' : '/login', { replaceState: true }));
+  onMount(() => {
+    goto(getStudentSession() ? '/preferences' : '/login', { replaceState: true });
+  });
 </script>
 
-<div class="redirect" aria-live="polite">Opening FieldSelect…</div>
+<p class="loading">Loading…</p>
 
 <style>
-  .redirect { display: grid; min-height: 100vh; place-items: center; color: #67738b; }
+  .loading {
+    padding: 40px;
+    color: #6b7280;
+    text-align: center;
+  }
 </style>
