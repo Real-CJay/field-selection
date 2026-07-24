@@ -14,15 +14,15 @@ const validRankings = Object.fromEntries(
 
 describe('preference rankings', () => {
   it('requires every department', () => {
-    expect(validateRankings(emptyRankings())).toBe('Give every department a rank from 1 to 9.');
+    expect(validateRankings(emptyRankings())).toBe('Give every department a rank from 1 to 10.');
   });
 
   it('rejects duplicate ranks', () => {
     const duplicate = { ...validRankings, biomedical: 2 };
-    expect(validateRankings(duplicate)).toBe('Each rank from 1 to 9 must be used once.');
+    expect(validateRankings(duplicate)).toBe('Each rank from 1 to 10 must be used once.');
   });
 
-  it('accepts each rank from 1 to 9 exactly once', () => {
+  it('accepts each rank from 1 to 10 exactly once', () => {
     expect(validateRankings(validRankings)).toBeNull();
   });
 
@@ -31,13 +31,14 @@ describe('preference rankings', () => {
       index_number: '220001A',
       biomedical: 1,
       chemical: 2,
-      computer: 3,
-      electrical: 4,
-      electronic: 5,
-      material: 6,
-      mechanical: 7,
-      aeronautical: 8,
-      mechatronics: 9
+      civil: 3,
+      computer: 4,
+      electrical: 5,
+      electronic: 6,
+      material: 7,
+      mechanical: 8,
+      aeronautical: 9,
+      mechatronics: 10
     });
   });
 

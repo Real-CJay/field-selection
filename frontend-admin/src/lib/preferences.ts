@@ -3,6 +3,7 @@ import type { DepartmentId, StudentPreferences, StudentRankings } from './types'
 export const DEPARTMENTS: ReadonlyArray<{ id: DepartmentId; name: string }> = [
   { id: 'biomedical', name: 'Biomedical Engineering' },
   { id: 'chemical', name: 'Chemical Engineering' },
+  { id: 'civil', name: 'Civil Engineering' },
   { id: 'computer', name: 'Computer Science and Engineering' },
   { id: 'electrical', name: 'Electrical Engineering' },
   { id: 'electronic', name: 'Electronic and Telecommunication Engineering' },
@@ -18,13 +19,18 @@ export function emptyRankings(): StudentRankings {
 
 export function validateRankings(rankings: StudentRankings): string | null {
   const values = DEPARTMENTS.map(({ id }) => rankings[id]);
-  if (values.some((value) => value === '')) return 'Give every department a rank from 1 to 9.';
+  const rankCount = DEPARTMENTS.length;
+  if (values.some((value) => value === '')) {
+    return `Give every department a rank from 1 to ${rankCount}.`;
+  }
 
   const ranks = values as number[];
-  if (ranks.some((rank) => !Number.isInteger(rank) || rank < 1 || rank > 9)) {
-    return 'Ranks must be whole numbers from 1 to 9.';
+  if (ranks.some((rank) => !Number.isInteger(rank) || rank < 1 || rank > rankCount)) {
+    return `Ranks must be whole numbers from 1 to ${rankCount}.`;
   }
-  if (new Set(ranks).size !== 9) return 'Each rank from 1 to 9 must be used once.';
+  if (new Set(ranks).size !== rankCount) {
+    return `Each rank from 1 to ${rankCount} must be used once.`;
+  }
   return null;
 }
 
@@ -40,6 +46,7 @@ export function rankingsToPreferences(
     index_number: indexNumber,
     biomedical: Number(rankings.biomedical),
     chemical: Number(rankings.chemical),
+    civil: Number(rankings.civil),
     computer: Number(rankings.computer),
     electrical: Number(rankings.electrical),
     electronic: Number(rankings.electronic),

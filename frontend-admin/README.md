@@ -1,6 +1,6 @@
 # Field Selection Frontend
 
-Simple SvelteKit student interface for logging in and submitting nine field preferences to Supabase.
+Simple SvelteKit student interface for logging in and submitting ten field preferences to Supabase.
 
 ## Setup
 
@@ -21,7 +21,7 @@ Students sign in with an index number that exists in the `students` table and th
 ## Current pages
 
 - `/login` — student index and password
-- `/preferences` — rank all nine departments from 1 to 9
+- `/preferences` — rank all ten departments from 1 to 10
 
 The result page and allocation integration are intentionally deferred.
 

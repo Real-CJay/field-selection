@@ -26,9 +26,9 @@ describe('student repository', () => {
     const from = vi.fn().mockReturnValue({ upsert });
     const repository = createStudentRepository({ from } as unknown as SupabaseClient);
     const preferences: StudentPreferences = {
-      index_number: '220001A', biomedical: 1, chemical: 2, computer: 3,
-      electrical: 4, electronic: 5, material: 6, mechanical: 7,
-      aeronautical: 8, mechatronics: 9
+      index_number: '220001A', biomedical: 1, chemical: 2, civil: 3, computer: 4,
+      electrical: 5, electronic: 6, material: 7, mechanical: 8,
+      aeronautical: 9, mechatronics: 10
     };
 
     await repository.savePreferences(preferences);

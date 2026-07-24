@@ -19,7 +19,7 @@ export function createStudentRepository(client: SupabaseClient) {
       const { data, error } = await client
         .from('student_preferences')
         .select(
-          'index_number, biomedical, chemical, computer, electrical, electronic, material, mechanical, aeronautical, mechatronics, submitted_at'
+          'index_number, biomedical, chemical, civil, computer, electrical, electronic, material, mechanical, aeronautical, mechatronics, submitted_at'
         )
         .eq('index_number', indexNumber)
         .maybeSingle();

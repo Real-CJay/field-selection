@@ -12,6 +12,7 @@ export interface StudentSession {
 export type DepartmentId =
   | 'biomedical'
   | 'chemical'
+  | 'civil'
   | 'computer'
   | 'electrical'
   | 'electronic'
@@ -27,6 +28,7 @@ export interface StudentPreferences {
   index_number: string;
   biomedical: number;
   chemical: number;
+  civil: number;
   computer: number;
   electrical: number;
   electronic: number;
@@ -35,4 +37,15 @@ export interface StudentPreferences {
   aeronautical: number;
   mechatronics: number;
   submitted_at?: string;
+}
+
+export type DepartmentCutoffs = Record<DepartmentId, number | null>;
+
+export interface AllocationResult {
+  status: 'success';
+  index_number: string;
+  name: string;
+  assigned_department: DepartmentId;
+  average_gpa: number;
+  cutoffs: DepartmentCutoffs;
 }

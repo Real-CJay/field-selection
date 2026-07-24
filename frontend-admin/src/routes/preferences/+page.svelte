@@ -12,7 +12,7 @@
   import { studentRepository } from '$lib/student-repository';
   import type { StudentRankings, StudentSession } from '$lib/types';
 
-  const rankOptions = Array.from({ length: 9 }, (_, index) => index + 1);
+  const rankOptions = Array.from({ length: DEPARTMENTS.length }, (_, index) => index + 1);
 
   let session = $state<StudentSession | null>(null);
   let rankings = $state<StudentRankings>(emptyRankings());
@@ -91,7 +91,10 @@
 
   <section class="card">
     <h2>Rank your preferences</h2>
-    <p class="muted">Assign each department a different rank from 1 to 9. Rank 1 is your first choice.</p>
+    <p class="muted">
+      Assign each department a different rank from 1 to {DEPARTMENTS.length}. Rank 1 is your first
+      choice.
+    </p>
 
     {#if loading}
       <p class="status">Loading preferences…</p>
