@@ -1,10 +1,14 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { getStudentSession } from '$lib/session';
+  import { getFluidMechanicsGrade, getStudentSession } from '$lib/session';
 
   onMount(() => {
-    goto(getStudentSession() ? '/preferences' : '/login', { replaceState: true });
+    const session = getStudentSession();
+    goto(
+      session ? (getFluidMechanicsGrade() ? '/preferences' : '/fluid-mechanics') : '/login',
+      { replaceState: true }
+    );
   });
 </script>
 

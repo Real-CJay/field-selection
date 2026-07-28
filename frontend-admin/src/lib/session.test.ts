@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { clearStudentSession, getStudentSession, saveStudentSession } from './session';
+import {
+  clearStudentSession,
+  getFluidMechanicsGrade,
+  getStudentSession,
+  saveFluidMechanicsGrade,
+  saveStudentSession
+} from './session';
 
 function memoryStorage(): Storage {
   const values = new Map<string, string>();
@@ -29,12 +35,30 @@ describe('student session', () => {
 
   it('clears a student session on logout', () => {
     saveStudentSession({ indexNumber: '220001A', name: 'Test Student' });
+    saveFluidMechanicsGrade('A-');
     clearStudentSession();
     expect(getStudentSession()).toBeNull();
+    expect(getFluidMechanicsGrade()).toBeNull();
   });
 
   it('rejects malformed session data', () => {
     sessionStorage.setItem('field-selection-student', '{bad json');
     expect(getStudentSession()).toBeNull();
+  });
+
+  it('saves and restores the temporary Fluid Mechanics grade', () => {
+    saveFluidMechanicsGrade('B+');
+    expect(getFluidMechanicsGrade()).toBe('B+');
+  });
+
+  it('clears an old grade when a student logs in', () => {
+    saveFluidMechanicsGrade('C');
+    saveStudentSession({ indexNumber: '220001A', name: 'Test Student' });
+    expect(getFluidMechanicsGrade()).toBeNull();
+  });
+
+  it('rejects a grade outside the allowed list', () => {
+    sessionStorage.setItem('field-selection-fluid-mechanics-grade', 'E');
+    expect(getFluidMechanicsGrade()).toBeNull();
   });
 });

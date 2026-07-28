@@ -9,6 +9,19 @@ export interface StudentSession {
   name: string;
 }
 
+export type FluidMechanicsGrade =
+  | 'A+'
+  | 'A'
+  | 'A-'
+  | 'B+'
+  | 'B'
+  | 'B-'
+  | 'C+'
+  | 'C'
+  | 'C-'
+  | 'D'
+  | 'F';
+
 export type DepartmentId =
   | 'biomedical'
   | 'chemical'

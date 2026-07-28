@@ -2,7 +2,11 @@
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { authenticateStudent } from '$lib/student-auth';
-  import { getStudentSession, saveStudentSession } from '$lib/session';
+  import {
+    getFluidMechanicsGrade,
+    getStudentSession,
+    saveStudentSession
+  } from '$lib/session';
   import { studentRepository } from '$lib/student-repository';
 
   let indexNumber = $state('');
@@ -11,7 +15,11 @@
   let message = $state('');
 
   onMount(() => {
-    if (getStudentSession()) goto('/preferences', { replaceState: true });
+    if (getStudentSession()) {
+      goto(getFluidMechanicsGrade() ? '/preferences' : '/fluid-mechanics', {
+        replaceState: true
+      });
+    }
   });
 
   async function submit(event: SubmitEvent) {
@@ -35,7 +43,7 @@
       indexNumber: result.student.index_number,
       name: result.student.name
     });
-    await goto('/preferences');
+    await goto('/fluid-mechanics');
   }
 </script>
 
