@@ -10,7 +10,7 @@
   } from '$lib/preferences';
   import {
     clearStudentSession,
-    getFluidMechanicsGrade,
+    getModuleGrades,
     getStudentSession
   } from '$lib/session';
   import { studentRepository } from '$lib/student-repository';
@@ -35,8 +35,8 @@
       await goto('/login', { replaceState: true });
       return;
     }
-    if (!getFluidMechanicsGrade()) {
-      await goto('/fluid-mechanics', { replaceState: true });
+    if (!getModuleGrades()) {
+      await goto('/module-grades', { replaceState: true });
       return;
     }
 
@@ -158,8 +158,8 @@
     <p class="eyebrow">Estimated placement</p>
     <h2 id="allocation-waiting-heading">Not enough students have filled the form yet.</h2>
     <p>
-      Encourage your friends to fill in their Fluid Mechanics grade and field preferences.
-      Estimated placements will appear here after the admin approves them.
+      Encourage your friends to fill in their Fluid Mechanics and Mechanics grades and field
+      preferences. Estimated placements will appear here after the admin approves them.
     </p>
   </section>
 </main>

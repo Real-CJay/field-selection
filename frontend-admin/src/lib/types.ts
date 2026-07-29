@@ -9,7 +9,7 @@ export interface StudentSession {
   name: string;
 }
 
-export type FluidMechanicsGrade =
+export type ModuleGrade =
   | 'A+'
   | 'A'
   | 'A-'
@@ -21,6 +21,11 @@ export type FluidMechanicsGrade =
   | 'C-'
   | 'D'
   | 'F';
+
+export interface ModuleGrades {
+  fluidMechanics: ModuleGrade;
+  mechanics: ModuleGrade;
+}
 
 export type DepartmentId =
   | 'biomedical'

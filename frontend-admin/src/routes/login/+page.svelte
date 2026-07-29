@@ -1,9 +1,10 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
+  import { getStudentEntryRoute } from '$lib/navigation';
   import { authenticateStudent } from '$lib/student-auth';
   import {
-    getFluidMechanicsGrade,
+    getModuleGrades,
     getStudentSession,
     saveStudentSession
   } from '$lib/session';
@@ -16,7 +17,7 @@
 
   onMount(() => {
     if (getStudentSession()) {
-      goto(getFluidMechanicsGrade() ? '/preferences' : '/fluid-mechanics', {
+      goto(getStudentEntryRoute(true, Boolean(getModuleGrades())), {
         replaceState: true
       });
     }
@@ -43,7 +44,7 @@
       indexNumber: result.student.index_number,
       name: result.student.name
     });
-    await goto('/fluid-mechanics');
+    await goto('/module-grades');
   }
 </script>
 

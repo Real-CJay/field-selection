@@ -1,17 +1,18 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { FLUID_MECHANICS_GRADES, isFluidMechanicsGrade } from '$lib/fluid-mechanics';
+  import { MODULE_GRADES, isModuleGrade } from '$lib/module-grades';
   import {
     clearStudentSession,
-    getFluidMechanicsGrade,
+    getModuleGrades,
     getStudentSession,
-    saveFluidMechanicsGrade
+    saveModuleGrades
   } from '$lib/session';
-  import type { FluidMechanicsGrade, StudentSession } from '$lib/types';
+  import type { ModuleGrade, StudentSession } from '$lib/types';
 
   let session = $state<StudentSession | null>(null);
-  let grade = $state<FluidMechanicsGrade | ''>('');
+  let fluidMechanics = $state<ModuleGrade | ''>('');
+  let mechanics = $state<ModuleGrade | ''>('');
   let message = $state('');
 
   onMount(async () => {
@@ -20,19 +21,24 @@
       await goto('/login', { replaceState: true });
       return;
     }
-    grade = getFluidMechanicsGrade() ?? '';
+
+    const saved = getModuleGrades();
+    if (saved) {
+      fluidMechanics = saved.fluidMechanics;
+      mechanics = saved.mechanics;
+    }
   });
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     message = '';
 
-    if (!isFluidMechanicsGrade(grade)) {
-      message = 'Select your Fluid Mechanics grade.';
+    if (!isModuleGrade(fluidMechanics) || !isModuleGrade(mechanics)) {
+      message = 'Select both your Fluid Mechanics and Mechanics grades.';
       return;
     }
 
-    saveFluidMechanicsGrade(grade);
+    saveModuleGrades({ fluidMechanics, mechanics });
     await goto('/preferences');
   }
 
@@ -42,13 +48,13 @@
   }
 </script>
 
-<svelte:head><title>Fluid Mechanics Grade · Field Selection</title></svelte:head>
+<svelte:head><title>Module Grades · Field Selection</title></svelte:head>
 
 <main class="grade-page">
   <section class="card grade-card">
     <div class="grade-header">
       <div>
-        <h1>Fluid Mechanics Grade</h1>
+        <h1>Module Grades</h1>
         {#if session}
           <p class="muted">{session.name} · {session.indexNumber}</p>
         {/if}
@@ -56,19 +62,29 @@
       <button class="button secondary" type="button" onclick={logout}>Logout</button>
     </div>
 
-    <p class="intro">Select the grade you received for the Fluid Mechanics module.</p>
+    <p class="intro">Select the grades you received for both modules.</p>
 
     <form onsubmit={submit}>
       <div class="field">
-        <label for="fluid-mechanics-grade">Grade</label>
+        <label for="fluid-mechanics-grade">Fluid Mechanics</label>
         <select
           class="select"
           id="fluid-mechanics-grade"
-          bind:value={grade}
+          bind:value={fluidMechanics}
           required
         >
           <option value="">Select your grade</option>
-          {#each FLUID_MECHANICS_GRADES as option}
+          {#each MODULE_GRADES as option}
+            <option value={option}>{option}</option>
+          {/each}
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="mechanics-grade">Mechanics</label>
+        <select class="select" id="mechanics-grade" bind:value={mechanics} required>
+          <option value="">Select your grade</option>
+          {#each MODULE_GRADES as option}
             <option value={option}>{option}</option>
           {/each}
         </select>
@@ -82,8 +98,8 @@
     </form>
 
     <p class="temporary-note">
-      Your grade is saved for this browser session. Backend submission will be connected after the
-      API details are confirmed.
+      Your grades are saved for this browser session. Backend submission will be connected after
+      the API details are confirmed.
     </p>
   </section>
 </main>

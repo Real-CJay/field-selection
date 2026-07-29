@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   clearStudentSession,
-  getFluidMechanicsGrade,
+  getModuleGrades,
   getStudentSession,
-  saveFluidMechanicsGrade,
+  saveModuleGrades,
   saveStudentSession
 } from './session';
 
@@ -35,10 +35,10 @@ describe('student session', () => {
 
   it('clears a student session on logout', () => {
     saveStudentSession({ indexNumber: '220001A', name: 'Test Student' });
-    saveFluidMechanicsGrade('A-');
+    saveModuleGrades({ fluidMechanics: 'A-', mechanics: 'B+' });
     clearStudentSession();
     expect(getStudentSession()).toBeNull();
-    expect(getFluidMechanicsGrade()).toBeNull();
+    expect(getModuleGrades()).toBeNull();
   });
 
   it('rejects malformed session data', () => {
@@ -46,19 +46,29 @@ describe('student session', () => {
     expect(getStudentSession()).toBeNull();
   });
 
-  it('saves and restores the temporary Fluid Mechanics grade', () => {
-    saveFluidMechanicsGrade('B+');
-    expect(getFluidMechanicsGrade()).toBe('B+');
+  it('saves and restores both temporary module grades', () => {
+    const grades = { fluidMechanics: 'B+' as const, mechanics: 'A-' as const };
+    saveModuleGrades(grades);
+    expect(getModuleGrades()).toEqual(grades);
   });
 
-  it('clears an old grade when a student logs in', () => {
-    saveFluidMechanicsGrade('C');
+  it('clears old module grades when a student logs in', () => {
+    saveModuleGrades({ fluidMechanics: 'C', mechanics: 'B' });
     saveStudentSession({ indexNumber: '220001A', name: 'Test Student' });
-    expect(getFluidMechanicsGrade()).toBeNull();
+    expect(getModuleGrades()).toBeNull();
   });
 
-  it('rejects a grade outside the allowed list', () => {
-    sessionStorage.setItem('field-selection-fluid-mechanics-grade', 'E');
-    expect(getFluidMechanicsGrade()).toBeNull();
+  it('rejects missing or unsupported module grades', () => {
+    sessionStorage.setItem(
+      'field-selection-module-grades',
+      JSON.stringify({ fluidMechanics: 'A', mechanics: 'E' })
+    );
+    expect(getModuleGrades()).toBeNull();
+
+    sessionStorage.setItem(
+      'field-selection-module-grades',
+      JSON.stringify({ fluidMechanics: 'A' })
+    );
+    expect(getModuleGrades()).toBeNull();
   });
 });

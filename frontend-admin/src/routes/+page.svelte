@@ -1,14 +1,14 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { getFluidMechanicsGrade, getStudentSession } from '$lib/session';
+  import { getStudentEntryRoute } from '$lib/navigation';
+  import { getModuleGrades, getStudentSession } from '$lib/session';
 
   onMount(() => {
     const session = getStudentSession();
-    goto(
-      session ? (getFluidMechanicsGrade() ? '/preferences' : '/fluid-mechanics') : '/login',
-      { replaceState: true }
-    );
+    goto(getStudentEntryRoute(Boolean(session), Boolean(getModuleGrades())), {
+      replaceState: true
+    });
   });
 </script>
 

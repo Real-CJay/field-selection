@@ -1,8 +1,8 @@
-import { isFluidMechanicsGrade } from './fluid-mechanics';
-import type { FluidMechanicsGrade, StudentSession } from './types';
+import { isModuleGrades } from './module-grades';
+import type { ModuleGrades, StudentSession } from './types';
 
 const SESSION_KEY = 'field-selection-student';
-const FLUID_MECHANICS_GRADE_KEY = 'field-selection-fluid-mechanics-grade';
+const MODULE_GRADES_KEY = 'field-selection-module-grades';
 
 export function getStudentSession(): StudentSession | null {
   if (typeof sessionStorage === 'undefined') return null;
@@ -26,27 +26,35 @@ export function getStudentSession(): StudentSession | null {
 export function saveStudentSession(session: StudentSession): void {
   if (typeof sessionStorage === 'undefined') return;
   sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
-  sessionStorage.removeItem(FLUID_MECHANICS_GRADE_KEY);
+  sessionStorage.removeItem(MODULE_GRADES_KEY);
 }
 
-export function getFluidMechanicsGrade(): FluidMechanicsGrade | null {
+export function getModuleGrades(): ModuleGrades | null {
   if (typeof sessionStorage === 'undefined') return null;
 
-  const saved = sessionStorage.getItem(FLUID_MECHANICS_GRADE_KEY);
-  if (!isFluidMechanicsGrade(saved)) {
-    sessionStorage.removeItem(FLUID_MECHANICS_GRADE_KEY);
+  const saved = sessionStorage.getItem(MODULE_GRADES_KEY);
+  if (!saved) return null;
+
+  try {
+    const parsed: unknown = JSON.parse(saved);
+    if (!isModuleGrades(parsed)) {
+      sessionStorage.removeItem(MODULE_GRADES_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    sessionStorage.removeItem(MODULE_GRADES_KEY);
     return null;
   }
-  return saved;
 }
 
-export function saveFluidMechanicsGrade(grade: FluidMechanicsGrade): void {
+export function saveModuleGrades(grades: ModuleGrades): void {
   if (typeof sessionStorage === 'undefined') return;
-  sessionStorage.setItem(FLUID_MECHANICS_GRADE_KEY, grade);
+  sessionStorage.setItem(MODULE_GRADES_KEY, JSON.stringify(grades));
 }
 
 export function clearStudentSession(): void {
   if (typeof sessionStorage === 'undefined') return;
   sessionStorage.removeItem(SESSION_KEY);
-  sessionStorage.removeItem(FLUID_MECHANICS_GRADE_KEY);
+  sessionStorage.removeItem(MODULE_GRADES_KEY);
 }
