@@ -2,8 +2,9 @@ import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 import ModuleGradesPage from '../routes/module-grades/+page.svelte';
 import PreferencesPage from '../routes/preferences/+page.svelte';
+import ResultsPage from '../routes/results/+page.svelte';
 
-describe('module grade flow', () => {
+describe('student flow', () => {
   it('renders required Fluid Mechanics and Mechanics grade fields', () => {
     const { body } = render(ModuleGradesPage);
 
@@ -14,12 +15,19 @@ describe('module grade flow', () => {
     expect(body.match(/Select your grade/g)).toHaveLength(2);
   });
 
-  it('keeps estimates hidden behind the admin-approval waiting message', () => {
+  it('keeps preferences focused on department ranking', () => {
     const { body } = render(PreferencesPage);
 
-    expect(body).toContain('Not enough students have filled the form yet.');
-    expect(body).toContain('Fluid Mechanics and Mechanics grades');
-    expect(body).toContain('after the admin approves them');
+    expect(body).toContain('Rank your preferences');
+    expect(body).not.toContain('Not enough students');
     expect(body).not.toContain('Live estimated allocation');
+  });
+
+  it('provides a separate results page with grades and cold-start feedback', () => {
+    const { body } = render(ResultsPage);
+
+    expect(body).toContain('Your Results');
+    expect(body).toContain('Module grades');
+    expect(body).toContain('Waking up the server and calculating estimates...');
   });
 });

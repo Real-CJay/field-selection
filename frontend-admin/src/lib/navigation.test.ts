@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { getStudentEntryRoute } from './navigation';
+import {
+  POST_PREFERENCES_ROUTE,
+  getStudentEntryRoute,
+  getStudentResultsEntryRoute
+} from './navigation';
 
 describe('student entry routing', () => {
   it('sends signed-out students to login', () => {
@@ -12,5 +16,18 @@ describe('student entry routing', () => {
 
   it('allows students with both module grades to open preferences', () => {
     expect(getStudentEntryRoute(true, true)).toBe('/preferences');
+  });
+});
+
+describe('results routing', () => {
+  it('protects results in login, grade, and preference order', () => {
+    expect(getStudentResultsEntryRoute(false, false, false)).toBe('/login');
+    expect(getStudentResultsEntryRoute(true, false, false)).toBe('/module-grades');
+    expect(getStudentResultsEntryRoute(true, true, false)).toBe('/preferences');
+    expect(getStudentResultsEntryRoute(true, true, true)).toBe('/results');
+  });
+
+  it('sends a successful preference submission to results', () => {
+    expect(POST_PREFERENCES_ROUTE).toBe('/results');
   });
 });

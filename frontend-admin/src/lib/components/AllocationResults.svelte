@@ -2,12 +2,15 @@
   import {
     ALLOCATION_DISCLAIMER,
     formatCutoff,
+    formatGpa,
+    getConfidence,
     getDepartmentName
   } from '$lib/allocation';
   import { DEPARTMENTS } from '$lib/preferences';
   import type { AllocationResult } from '$lib/types';
 
   let { result }: { result: AllocationResult } = $props();
+  let confidence = $derived(getConfidence(result.accuracy_percentage));
 </script>
 
 <section class="results" aria-labelledby="allocation-heading">
@@ -17,11 +20,27 @@
       <h2 id="allocation-heading">{getDepartmentName(result.assigned_department)}</h2>
       <p class="student">{result.name} · {result.index_number}</p>
     </div>
-    <div class="gpa" aria-label={`Average GPA ${result.average_gpa}`}>
+    <div class="gpa" aria-label={`Average GPA ${formatGpa(result.average_gpa)}`}>
       <span>Average GPA</span>
-      <strong>{result.average_gpa}</strong>
+      <strong>{formatGpa(result.average_gpa)}</strong>
     </div>
   </header>
+
+  <div class="metrics" aria-label="Allocation estimate details">
+    <div class="metric">
+      <span>Student rank</span>
+      <strong>#{result.student_rank}</strong>
+    </div>
+    <div class="metric">
+      <span>Accuracy</span>
+      <strong>{result.accuracy_percentage.toFixed(1)}%</strong>
+      <small>{result.total_students_processed} / 743 students submitted</small>
+    </div>
+    <div class="metric">
+      <span>Confidence</span>
+      <strong class={`confidence ${confidence.level}`}>{confidence.label}</strong>
+    </div>
+  </div>
 
   <div class="cutoffs">
     <h3>Current estimated cut-offs</h3>
@@ -30,7 +49,7 @@
         <thead>
           <tr>
             <th scope="col">Department</th>
-            <th scope="col">Cut-off</th>
+            <th scope="col">Cut-off GPA</th>
           </tr>
         </thead>
         <tbody>
@@ -39,7 +58,7 @@
               <td>
                 {department.name}
                 {#if department.id === result.assigned_department}
-                  <span class="assigned-label">Your allocation</span>
+                  <span class="assigned-label">Your estimated allocation</span>
                 {/if}
               </td>
               <td>
@@ -96,7 +115,7 @@
   }
 
   .gpa {
-    min-width: 120px;
+    min-width: 140px;
     border: 1px solid #bfdbfe;
     border-radius: 8px;
     background: #eff6ff;
@@ -105,12 +124,17 @@
   }
 
   .gpa span,
-  .gpa strong {
+  .gpa strong,
+  .metric span,
+  .metric strong,
+  .metric small {
     display: block;
   }
 
-  .gpa span {
-    color: #4b5563;
+  .gpa span,
+  .metric span,
+  .metric small {
+    color: #6b7280;
     font-size: 0.8rem;
   }
 
@@ -118,6 +142,61 @@
     margin-top: 3px;
     color: #1e3a8a;
     font-size: 1.45rem;
+  }
+
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-top: 24px;
+  }
+
+  .metric {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #f9fafb;
+    padding: 14px;
+  }
+
+  .metric strong {
+    margin-top: 4px;
+    font-size: 1.2rem;
+  }
+
+  .metric small {
+    margin-top: 4px;
+  }
+
+  .confidence {
+    width: fit-content;
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-size: 0.92rem !important;
+  }
+
+  .confidence.very-low {
+    background: #fee2e2;
+    color: #991b1b;
+  }
+
+  .confidence.low {
+    background: #ffedd5;
+    color: #9a3412;
+  }
+
+  .confidence.medium {
+    background: #fef9c3;
+    color: #854d0e;
+  }
+
+  .confidence.average {
+    background: #dcfce7;
+    color: #166534;
+  }
+
+  .confidence.high {
+    background: #15803d;
+    color: #ffffff;
   }
 
   .cutoffs {
@@ -154,7 +233,7 @@
 
   th:last-child,
   td:last-child {
-    width: 145px;
+    width: 170px;
   }
 
   tr.assigned td {
@@ -202,6 +281,10 @@
 
     .gpa {
       width: 100%;
+    }
+
+    .metrics {
+      grid-template-columns: 1fr;
     }
 
     th,

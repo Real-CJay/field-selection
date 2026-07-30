@@ -45,4 +45,18 @@ describe('student repository', () => {
 
     await expect(repository.savePreferences({} as StudentPreferences)).rejects.toBe(databaseError);
   });
+
+  it('saves both student-entered module grades together', async () => {
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    const from = vi.fn().mockReturnValue({ upsert });
+    const repository = createStudentRepository({ from } as unknown as SupabaseClient);
+
+    await repository.saveGrades('220001A', 3.7, 3.3);
+
+    expect(from).toHaveBeenCalledWith('student_results');
+    expect(upsert).toHaveBeenCalledWith(
+      { index_number: '220001A', fluids: 3.7, mechanics: 3.3 },
+      { onConflict: 'index_number' }
+    );
+  });
 });

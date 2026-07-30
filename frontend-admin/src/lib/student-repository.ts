@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from './supabase';
-import type { Student, StudentPreferences } from './types';
+import type { Student, StudentPreferences, StudentResults } from './types';
 
 export function createStudentRepository(client: SupabaseClient) {
   return {
@@ -28,10 +28,29 @@ export function createStudentRepository(client: SupabaseClient) {
       return data as StudentPreferences | null;
     },
 
+    async getResults(indexNumber: string): Promise<StudentResults | null> {
+      const { data, error } = await client
+        .from('student_results')
+        .select('index_number, average_gpa, cse, electrical, fluids, maths, mechanics, material')
+        .eq('index_number', indexNumber)
+        .maybeSingle();
+
+      if (error) throw error;
+      return data as StudentResults | null;
+    },
+
     async savePreferences(preferences: StudentPreferences): Promise<void> {
       const { error } = await client
         .from('student_preferences')
         .upsert(preferences, { onConflict: 'index_number' });
+
+      if (error) throw error;
+    },
+
+    async saveGrades(indexNumber: string, fluids: number, mechanics: number): Promise<void> {
+      const { error } = await client
+        .from('student_results')
+        .upsert({ index_number: indexNumber, fluids, mechanics }, { onConflict: 'index_number' });
 
       if (error) throw error;
     }

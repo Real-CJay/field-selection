@@ -27,6 +27,17 @@ export interface ModuleGrades {
   mechanics: ModuleGrade;
 }
 
+export interface StudentResults {
+  index_number: string;
+  average_gpa?: number;
+  cse?: number;
+  electrical?: number;
+  fluids?: number;
+  maths?: number;
+  mechanics?: number;
+  material?: number;
+}
+
 export type DepartmentId =
   | 'biomedical'
   | 'chemical'
@@ -63,7 +74,10 @@ export interface AllocationResult {
   status: 'success';
   index_number: string;
   name: string;
-  assigned_department: DepartmentId;
+  assigned_department: DepartmentId | null;
   average_gpa: number;
+  student_rank: number;
   cutoffs: DepartmentCutoffs;
+  total_students_processed: number;
+  accuracy_percentage: number;
 }

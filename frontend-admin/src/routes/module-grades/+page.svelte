@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { MODULE_GRADES, isModuleGrade } from '$lib/module-grades';
+  import { GRADE_TO_GPA, MODULE_GRADES, isModuleGrade } from '$lib/module-grades';
   import {
     clearStudentSession,
     getModuleGrades,
@@ -9,11 +9,13 @@
     saveModuleGrades
   } from '$lib/session';
   import type { ModuleGrade, StudentSession } from '$lib/types';
+  import { studentRepository } from '$lib/student-repository';
 
   let session = $state<StudentSession | null>(null);
   let fluidMechanics = $state<ModuleGrade | ''>('');
   let mechanics = $state<ModuleGrade | ''>('');
   let message = $state('');
+  let saving = $state(false);
 
   onMount(async () => {
     session = getStudentSession();
@@ -31,6 +33,7 @@
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
+    if (!session) return;
     message = '';
 
     if (!isModuleGrade(fluidMechanics) || !isModuleGrade(mechanics)) {
@@ -38,8 +41,20 @@
       return;
     }
 
-    saveModuleGrades({ fluidMechanics, mechanics });
-    await goto('/preferences');
+    saving = true;
+    try {
+      await studentRepository.saveGrades(
+        session.indexNumber,
+        GRADE_TO_GPA[fluidMechanics],
+        GRADE_TO_GPA[mechanics]
+      );
+      saveModuleGrades({ fluidMechanics, mechanics });
+      await goto('/preferences');
+    } catch {
+      message = 'Unable to save grades. Please try again.';
+    } finally {
+      saving = false;
+    }
   }
 
   function logout() {
@@ -94,12 +109,13 @@
         <div class="message" role="alert">{message}</div>
       {/if}
 
-      <button class="button continue" type="submit">Continue to Preferences</button>
+      <button class="button continue" type="submit" disabled={saving}>
+        {saving ? 'Saving…' : 'Continue to Preferences'}
+      </button>
     </form>
 
     <p class="temporary-note">
-      Your grades are saved for this browser session. Backend submission will be connected after
-      the API details are confirmed.
+      Your grades are saved securely with your student results.
     </p>
   </section>
 </main>

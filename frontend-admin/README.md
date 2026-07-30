@@ -1,36 +1,38 @@
 # Field Selection Frontend
 
-Simple SvelteKit student interface for logging in and submitting ten field preferences to Supabase.
+SvelteKit student interface for module grades, field preferences, and live estimated allocation results.
 
 ## Setup
 
-```bash
-npm install
-npm run dev
+```powershell
+npm.cmd install
+npm.cmd run dev
 ```
 
-The local `.env` contains the supplied Supabase project URL and publishable key. For another environment, configure:
+Configure a local `.env`:
 
 ```env
 PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
+PUBLIC_API_BASE_URL=http://localhost:8000
 ```
 
-Students sign in with an index number that exists in the `students` table and the shared password `student123`. They must enter their Fluid Mechanics and Mechanics grades before ranking their preferences.
+Students sign in with an index number that exists in the `students` table and the shared password `student123`.
 
-## Current pages
+## Student flow
 
 - `/login` — student index and password
-- `/module-grades` — enter Fluid Mechanics and Mechanics grades for the current browser session
+- `/module-grades` — save Fluid Mechanics and Mechanics grades
 - `/preferences` — rank all ten departments from 1 to 10
+- `/results` — module grades, four-decimal GPA, rank, estimated allocation, confidence, and cutoffs
 - `/fluid-mechanics` — compatibility redirect to `/module-grades`
 
-Grade submission to the backend, admin approval, and allocation integration are intentionally deferred.
+Saving preferences redirects to `/results`. The allocation request may take 50–60 seconds while a sleeping Render backend starts.
 
 ## Verify
 
-```bash
-npm test
-npm run check
-npm run build
+```powershell
+npm.cmd test
+npm.cmd run check
+npm.cmd run build
 ```

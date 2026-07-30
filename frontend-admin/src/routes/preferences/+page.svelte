@@ -14,6 +14,7 @@
     getStudentSession
   } from '$lib/session';
   import { studentRepository } from '$lib/student-repository';
+  import { POST_PREFERENCES_ROUTE } from '$lib/navigation';
   import type { StudentRankings, StudentSession } from '$lib/types';
 
   const rankOptions = Array.from({ length: DEPARTMENTS.length }, (_, index) => index + 1);
@@ -23,7 +24,6 @@
   let loading = $state(true);
   let saving = $state(false);
   let errorMessage = $state('');
-  let successMessage = $state('');
 
   let usedRanks = $derived(
     new Set(Object.values(rankings).filter((rank): rank is number => typeof rank === 'number'))
@@ -54,7 +54,6 @@
     const value = (event.currentTarget as HTMLSelectElement).value;
     rankings[department] = value === '' ? '' : Number(value);
     errorMessage = '';
-    successMessage = '';
   }
 
   async function submit(event: SubmitEvent) {
@@ -62,7 +61,6 @@
     if (!session) return;
 
     errorMessage = validateRankings(rankings) ?? '';
-    successMessage = '';
     if (errorMessage) return;
 
     saving = true;
@@ -70,7 +68,7 @@
       await studentRepository.savePreferences(
         rankingsToPreferences(session.indexNumber, rankings)
       );
-      successMessage = 'Your field preferences were saved successfully.';
+      await goto(POST_PREFERENCES_ROUTE);
     } catch {
       errorMessage = 'Unable to save preferences. Please try again.';
     } finally {
@@ -143,10 +141,6 @@
         {#if errorMessage}
           <div class="message" role="alert">{errorMessage}</div>
         {/if}
-        {#if successMessage}
-          <div class="message success" role="status">{successMessage}</div>
-        {/if}
-
         <button class="button save" type="submit" disabled={saving}>
           {saving ? 'Saving…' : 'Save Preferences'}
         </button>
@@ -154,14 +148,6 @@
     {/if}
   </section>
 
-  <section class="card allocation-waiting" aria-labelledby="allocation-waiting-heading">
-    <p class="eyebrow">Estimated placement</p>
-    <h2 id="allocation-waiting-heading">Not enough students have filled the form yet.</h2>
-    <p>
-      Encourage your friends to fill in their Fluid Mechanics and Mechanics grades and field
-      preferences. Estimated placements will appear here after the admin approves them.
-    </p>
-  </section>
 </main>
 
 <style>
@@ -216,30 +202,6 @@
   .status {
     margin: 24px 0 0;
     color: #6b7280;
-  }
-
-  .allocation-waiting {
-    margin-top: 20px;
-    border-color: #bfdbfe;
-    background: #eff6ff;
-  }
-
-  .allocation-waiting .eyebrow {
-    margin-bottom: 6px;
-    color: #1d4ed8;
-    font-size: 0.8rem;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
-
-  .allocation-waiting h2 {
-    color: #1e3a8a;
-  }
-
-  .allocation-waiting p:last-child {
-    margin-bottom: 0;
-    line-height: 1.5;
   }
 
   @media (max-width: 520px) {

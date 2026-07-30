@@ -1,0 +1,10 @@
+CREATE TABLE IF NOT EXISTS public.student_results (
+  index_number VARCHAR PRIMARY KEY REFERENCES public.students(index_number) ON DELETE CASCADE,
+  average_gpa DECIMAL(5, 4) NULL,
+  cse DECIMAL(4, 2) NULL,
+  electrical DECIMAL(4, 2) NULL,
+  fluids DECIMAL(4, 2) NULL,
+  maths DECIMAL(4, 2) NULL,
+  mechanics DECIMAL(4, 2) NULL,
+  material DECIMAL(4, 2) NULL
+);

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { MODULE_GRADES, isModuleGrade, isModuleGrades } from './module-grades';
+import {
+  GRADE_TO_GPA,
+  MODULE_GRADES,
+  getGradeFromGpa,
+  isModuleGrade,
+  isModuleGrades
+} from './module-grades';
 
 describe('module grades', () => {
   it('contains the allowed grades in display order', () => {
@@ -29,5 +35,12 @@ describe('module grades', () => {
     expect(isModuleGrades({ fluidMechanics: 'A-', mechanics: '' })).toBe(false);
     expect(isModuleGrades({ fluidMechanics: 'E', mechanics: 'B+' })).toBe(false);
     expect(isModuleGrades({ fluidMechanics: 'A-' })).toBe(false);
+  });
+
+  it('converts letter grades to stored grade points and back', () => {
+    expect(GRADE_TO_GPA['A-']).toBe(3.7);
+    expect(GRADE_TO_GPA.F).toBe(0);
+    expect(getGradeFromGpa(3.7)).toBe('A-');
+    expect(getGradeFromGpa(4)).toBe('A / A+');
   });
 });

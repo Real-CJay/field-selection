@@ -6,7 +6,9 @@ import {
   AllocationRequestError,
   createAllocationClient,
   formatCutoff,
+  formatGpa,
   getAllocationErrorState,
+  getConfidence,
   getDepartmentName,
   parseAllocationResult
 } from './allocation';
@@ -16,7 +18,8 @@ const responseBody = {
   index_number: '250001E',
   name: 'Test Student',
   assigned_department: 'computer',
-  average_gpa: 3.82,
+  average_gpa: 3.8214,
+  student_rank: 12,
   cutoffs: {
     biomedical: 3.42,
     chemical: 3.15,
@@ -28,12 +31,21 @@ const responseBody = {
     mechanical: 3.25,
     aeronautical: null,
     mechatronics: 3.6
-  }
+  },
+  total_students_processed: 45,
+  accuracy_percentage: 6.1
 } as const;
 
 describe('allocation results', () => {
-  it('maps the confirmed successful response', () => {
+  it('maps the complete successful response', () => {
     expect(parseAllocationResult(responseBody)).toEqual(responseBody);
+  });
+
+  it('accepts a nullable placement', () => {
+    expect(parseAllocationResult({ ...responseBody, assigned_department: null })).toMatchObject({
+      assigned_department: null
+    });
+    expect(getDepartmentName(null)).toBe('No placement available');
   });
 
   it('rejects a response that omits a department cutoff', () => {
@@ -41,7 +53,6 @@ describe('allocation results', () => {
       ...responseBody,
       cutoffs: { ...responseBody.cutoffs, biomedical: undefined }
     };
-
     expect(() => parseAllocationResult(invalid)).toThrow(AllocationRequestError);
   });
 
@@ -49,9 +60,20 @@ describe('allocation results', () => {
     expect(getDepartmentName('computer')).toBe('Computer Science and Engineering');
   });
 
-  it('shows an unfilled cutoff as Open without rounding numeric values', () => {
+  it('formats GPA and cutoffs at four decimal places', () => {
     expect(formatCutoff(null)).toBe('Open');
-    expect(formatCutoff(3.815)).toBe('3.815');
+    expect(formatCutoff(3.815)).toBe('3.8150');
+    expect(formatGpa(3.82)).toBe('3.8200');
+  });
+
+  it('maps every confidence boundary', () => {
+    expect(getConfidence(0).label).toBe('Very Low');
+    expect(getConfidence(59.9).label).toBe('Very Low');
+    expect(getConfidence(60).label).toBe('Low');
+    expect(getConfidence(70).label).toBe('Medium');
+    expect(getConfidence(80).label).toBe('Average');
+    expect(getConfidence(90).label).toBe('High');
+    expect(getConfidence(100).label).toBe('High');
   });
 
   it('provides the required loading and disclaimer copy', () => {
@@ -59,9 +81,7 @@ describe('allocation results', () => {
       'Waking up the server and calculating estimates...'
     );
     expect(ALLOCATION_LOADING_DESCRIPTION).toContain('50–60 seconds');
-    expect(ALLOCATION_DISCLAIMER).toBe(
-      'These cut-offs and placements are live estimates based on current student submissions. These are NOT final university results and your placement will fluctuate as more students enter their data.'
-    );
+    expect(ALLOCATION_DISCLAIMER).toContain('These are NOT final university results');
   });
 
   it('selects the 404 state separately from the general error state', () => {
@@ -73,30 +93,24 @@ describe('allocation results', () => {
 });
 
 describe('allocation client', () => {
-  it('uses the caller-provided request without assuming a backend origin or authentication', async () => {
-    const fetcher = vi
-      .fn()
-      .mockResolvedValue(
-        new Response(JSON.stringify(responseBody), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' }
-        })
-      );
+  it('uses the caller-provided request', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(responseBody), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    );
     const client = createAllocationClient({
       fetcher,
       requestForIndex: (indexNumber) => ({
-        input: `https://provided-by-integrator.test/api/allocation/${indexNumber}`,
-        init: { headers: { Authorization: 'provided-by-integrator' } }
+        input: `https://provided-by-integrator.test/api/allocation/${indexNumber}`
       })
     });
 
     await expect(client.getAllocation('250001E')).resolves.toEqual(responseBody);
     expect(fetcher).toHaveBeenCalledWith(
       'https://provided-by-integrator.test/api/allocation/250001E',
-      {
-        headers: { Authorization: 'provided-by-integrator' },
-        method: 'GET'
-      }
+      { method: 'GET' }
     );
   });
 
@@ -112,7 +126,7 @@ describe('allocation client', () => {
     });
   });
 
-  it('reports an invalid JSON response separately', async () => {
+  it('reports invalid JSON separately', async () => {
     const client = createAllocationClient({
       fetcher: vi.fn().mockResolvedValue(new Response('not json', { status: 200 })),
       requestForIndex: () => ({ input: 'https://provided-by-integrator.test/result' })
