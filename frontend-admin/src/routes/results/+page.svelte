@@ -6,7 +6,8 @@
   import AllocationLoading from '$lib/components/AllocationLoading.svelte';
   import AllocationResults from '$lib/components/AllocationResults.svelte';
   import AllocationStatus from '$lib/components/AllocationStatus.svelte';
-  import { getGradeFromGpa, hasSubmittedModuleGrades } from '$lib/module-grades';
+  import { MODULE_GRADES, getGradeFromGpa, hasSubmittedModuleGrades } from '$lib/module-grades';
+  import { submitGradeCorrection } from '$lib/correction-client';
   import { getStudentResultsEntryRoute } from '$lib/navigation';
   import {
     clearStudentSession,
@@ -18,6 +19,7 @@
     StudentResults,
     StudentSession
   } from '$lib/types';
+  import type { CorrectableModule, ModuleGrade } from '$lib/types';
 
   const subjects = [
     { key: 'cse', label: 'CSE' },
@@ -34,6 +36,10 @@
   let resultsLoading = $state(true);
   let allocationState = $state<'loading' | 'not-found' | 'error'>('loading');
   let resultsError = $state('');
+  let correctionModule = $state<CorrectableModule>('cse');
+  let requestedGrade = $state<ModuleGrade | ''>('');
+  let correctionMessage = $state('');
+  let correctionSaving = $state(false);
 
   onMount(async () => {
     const activeSession = getStudentSession();
@@ -77,6 +83,22 @@
     clearStudentSession();
     goto('/login');
   }
+
+  async function requestCorrection(event: SubmitEvent) {
+    event.preventDefault();
+    if (!session || !requestedGrade) return;
+    correctionSaving = true;
+    correctionMessage = '';
+    try {
+      await submitGradeCorrection(session.indexNumber, correctionModule, requestedGrade);
+      correctionMessage = 'Your correction request was sent to the administrator.';
+      requestedGrade = '';
+    } catch (error) {
+      correctionMessage = error instanceof Error ? error.message : 'Unable to send the request.';
+    } finally {
+      correctionSaving = false;
+    }
+  }
 </script>
 
 <svelte:head><title>Your Results · Field Selection</title></svelte:head>
@@ -90,6 +112,7 @@
       {/if}
     </div>
     <div class="actions">
+      <a class="button secondary" href="/module-grades">Edit Fluid/Mechanics grades</a>
       <a class="button secondary" href="/preferences">Edit preferences</a>
       <button class="button secondary" type="button" onclick={logout}>Logout</button>
     </div>
@@ -117,7 +140,35 @@
           </tbody>
         </table>
       </div>
-      <p class="result-note">If these module grades are incorrect, contact the administrator.</p>
+      <section class="correction" aria-labelledby="correction-heading">
+        <h3 id="correction-heading">Request a grade correction</h3>
+        <p class="result-note">
+          For CSE, Mathematics, Electrical, or Material Science, send the correct grade for admin
+          review. Fluid Mechanics and Mechanics can be edited directly above.
+        </p>
+        <form class="correction-form" onsubmit={requestCorrection}>
+          <label>
+            Module
+            <select class="select" bind:value={correctionModule}>
+              <option value="cse">CSE</option>
+              <option value="maths">Mathematics</option>
+              <option value="electrical">Electrical</option>
+              <option value="material">Material Science</option>
+            </select>
+          </label>
+          <label>
+            Correct grade
+            <select class="select" bind:value={requestedGrade} required>
+              <option value="">Select grade</option>
+              {#each MODULE_GRADES as grade}<option value={grade}>{grade}</option>{/each}
+            </select>
+          </label>
+          <button class="button" type="submit" disabled={correctionSaving}>
+            {correctionSaving ? 'Sending…' : 'Send request'}
+          </button>
+        </form>
+        {#if correctionMessage}<p class="correction-message" role="status">{correctionMessage}</p>{/if}
+      </section>
     {/if}
   </section>
 
@@ -195,6 +246,18 @@
     font-size: 0.85rem;
   }
 
+  .correction {
+    margin-top: 24px;
+    border-top: 1px solid #e5e7eb;
+    padding-top: 20px;
+  }
+
+  .correction h3 { margin: 0; font-size: 1rem; }
+  .correction-form { display: flex; align-items: end; gap: 12px; margin-top: 16px; }
+  .correction-form label { flex: 1; font-size: 0.85rem; font-weight: 600; }
+  .correction-form .select { margin-top: 6px; }
+  .correction-message { margin: 14px 0 0; color: #166534; }
+
   .status {
     margin: 18px 0 0;
     color: #6b7280;
@@ -213,6 +276,8 @@
     .actions {
       width: 100%;
     }
+
+    .correction-form { align-items: stretch; flex-direction: column; }
 
     .actions .button {
       flex: 1;

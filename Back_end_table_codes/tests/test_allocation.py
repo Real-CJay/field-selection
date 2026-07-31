@@ -1,10 +1,14 @@
 from decimal import Decimal
+import pytest
+from fastapi import HTTPException
+from fastapi.security import HTTPBasicCredentials
 
 from api_server import (
     allocate_students,
     assign_competition_ranks,
     calculate_accuracy,
     calculate_average_gpa,
+    require_admin,
 )
 
 
@@ -111,3 +115,13 @@ def test_accuracy_is_one_decimal_and_capped_at_one_hundred():
     assert calculate_accuracy(7) == 0.9
     assert calculate_accuracy(743) == 100
     assert calculate_accuracy(800) == 100
+
+
+def test_admin_credentials_are_checked_server_side(monkeypatch):
+    monkeypatch.setenv("ADMIN_USERNAME", "CJay")
+    monkeypatch.setenv("ADMIN_PASSWORD", "admin")
+    assert require_admin(HTTPBasicCredentials(username="CJay", password="admin")) == "CJay"
+
+    with pytest.raises(HTTPException) as error:
+        require_admin(HTTPBasicCredentials(username="CJay", password="wrong"))
+    assert error.value.status_code == 401

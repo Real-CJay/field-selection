@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   GRADE_TO_GPA,
   MODULE_GRADES,
+  getEditableGradeFromGpa,
   getGradeFromGpa,
   isModuleGrade,
   isModuleGrades,
@@ -43,6 +44,7 @@ describe('module grades', () => {
     expect(GRADE_TO_GPA.F).toBe(0);
     expect(getGradeFromGpa(3.7)).toBe('A-');
     expect(getGradeFromGpa(4)).toBe('A / A+');
+    expect(getEditableGradeFromGpa(3.7)).toBe('A-');
   });
 });
 

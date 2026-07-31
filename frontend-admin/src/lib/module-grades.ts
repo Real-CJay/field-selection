@@ -46,6 +46,11 @@ export function getGradeFromGpa(gpa: number | null | undefined): string {
   return MODULE_GRADES.find((grade) => GRADE_TO_GPA[grade] === gpa) ?? 'Not available';
 }
 
+export function getEditableGradeFromGpa(gpa: number | null | undefined): ModuleGrade | null {
+  if (gpa == null) return null;
+  return MODULE_GRADES.find((grade) => GRADE_TO_GPA[grade] === gpa) ?? null;
+}
+
 export function hasSubmittedModuleGrades(results: StudentResults | null): boolean {
   return typeof results?.fluids === 'number' && typeof results.mechanics === 'number';
 }

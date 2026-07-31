@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
+from datetime import datetime, timezone
 import os
+import secrets
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Path
+from fastapi import Depends, FastAPI, HTTPException, Path, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from pydantic import BaseModel
 from supabase import Client, create_client
 
 load_dotenv()
@@ -23,7 +27,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=frontend_origins,
     allow_credentials=True,
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["*"],
 )
 
@@ -64,6 +68,39 @@ SUBJECT_CREDITS = {
 
 GPA_PRECISION = Decimal("0.0001")
 TOTAL_COHORT = 743
+CORRECTABLE_MODULES = {"cse", "maths", "electrical", "material"}
+GRADE_VALUES = {
+    "A+": 4.0, "A": 4.0, "A-": 3.7, "B+": 3.3, "B": 3.0, "B-": 2.7,
+    "C+": 2.3, "C": 2.0, "C-": 1.7, "D": 1.0, "F": 0.0,
+}
+security = HTTPBasic()
+
+
+class CorrectionRequestInput(BaseModel):
+    index_number: str
+    module: str
+    requested_grade: str
+
+
+class CorrectionDecisionInput(BaseModel):
+    decision: str
+
+
+def require_admin(credentials: HTTPBasicCredentials = Depends(security)) -> str:
+    expected_username = os.environ.get("ADMIN_USERNAME")
+    expected_password = os.environ.get("ADMIN_PASSWORD")
+    valid = bool(expected_username and expected_password)
+    if valid:
+        valid = secrets.compare_digest(credentials.username, expected_username) and secrets.compare_digest(
+            credentials.password, expected_password
+        )
+    if not valid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid administrator credentials.",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
 
 
 def as_decimal(value: Any) -> Decimal:
@@ -306,6 +343,109 @@ def get_student_allocation(
             "total_students_processed": len(students),
             "accuracy_percentage": calculate_accuracy(len(students)),
         }
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+@app.post("/api/correction-requests", status_code=status.HTTP_201_CREATED)
+def create_correction_request(request: CorrectionRequestInput) -> dict[str, Any]:
+    module = request.module.strip().lower()
+    grade = request.requested_grade.strip().upper()
+    if module not in CORRECTABLE_MODULES or grade not in GRADE_VALUES:
+        raise HTTPException(status_code=422, detail="Invalid module or requested grade.")
+
+    try:
+        database = get_supabase()
+        result = (
+            database.table("student_results")
+            .select(f"index_number,{module}")
+            .eq("index_number", request.index_number)
+            .maybe_single()
+            .execute()
+        )
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Student results were not found.")
+
+        existing = (
+            database.table("grade_correction_requests")
+            .select("id")
+            .eq("index_number", request.index_number)
+            .eq("module", module)
+            .eq("status", "pending")
+            .execute()
+        )
+        if existing.data:
+            raise HTTPException(status_code=409, detail="A pending request already exists for this module.")
+
+        created = (
+            database.table("grade_correction_requests")
+            .insert({
+                "index_number": request.index_number,
+                "module": module,
+                "current_grade": result.data.get(module),
+                "requested_grade": grade,
+                "status": "pending",
+            })
+            .execute()
+        )
+        return {"status": "success", "request": created.data[0] if created.data else None}
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+@app.get("/api/admin/correction-requests")
+def list_correction_requests(_: str = Depends(require_admin)) -> dict[str, Any]:
+    try:
+        response = (
+            get_supabase().table("grade_correction_requests")
+            .select("id,index_number,module,current_grade,requested_grade,status,created_at,reviewed_at")
+            .order("created_at", desc=True)
+            .execute()
+        )
+        return {"status": "success", "requests": response.data}
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+@app.patch("/api/admin/correction-requests/{request_id}")
+def review_correction_request(
+    decision: CorrectionDecisionInput,
+    request_id: int = Path(..., ge=1),
+    _: str = Depends(require_admin),
+) -> dict[str, Any]:
+    if decision.decision not in {"approved", "rejected"}:
+        raise HTTPException(status_code=422, detail="Decision must be approved or rejected.")
+
+    try:
+        database = get_supabase()
+        response = (
+            database.table("grade_correction_requests")
+            .select("id,index_number,module,requested_grade,status")
+            .eq("id", request_id)
+            .maybe_single()
+            .execute()
+        )
+        correction = response.data
+        if not correction:
+            raise HTTPException(status_code=404, detail="Correction request was not found.")
+        if correction["status"] != "pending":
+            raise HTTPException(status_code=409, detail="This request has already been reviewed.")
+
+        if decision.decision == "approved":
+            database.table("student_results").update({
+                correction["module"]: GRADE_VALUES[correction["requested_grade"]]
+            }).eq("index_number", correction["index_number"]).execute()
+
+        reviewed_at = datetime.now(timezone.utc).isoformat()
+        database.table("grade_correction_requests").update({
+            "status": decision.decision,
+            "reviewed_at": reviewed_at,
+        }).eq("id", request_id).execute()
+        return {"status": "success", "decision": decision.decision}
     except HTTPException:
         raise
     except Exception as error:

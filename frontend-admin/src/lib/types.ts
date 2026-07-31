@@ -81,3 +81,16 @@ export interface AllocationResult {
   total_students_processed: number;
   accuracy_percentage: number;
 }
+
+export type CorrectableModule = 'cse' | 'maths' | 'electrical' | 'material';
+
+export interface GradeCorrectionRequest {
+  id: number;
+  index_number: string;
+  module: CorrectableModule;
+  current_grade: number | null;
+  requested_grade: ModuleGrade;
+  status: 'pending' | 'approved' | 'rejected';
+  created_at: string;
+  reviewed_at: string | null;
+}

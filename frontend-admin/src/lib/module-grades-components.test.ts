@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import ModuleGradesPage from '../routes/module-grades/+page.svelte';
 import PreferencesPage from '../routes/preferences/+page.svelte';
 import ResultsPage from '../routes/results/+page.svelte';
+import AdminPage from '../routes/admin/+page.svelte';
 
 describe('student flow', () => {
   it('renders required Fluid Mechanics and Mechanics grade fields', () => {
@@ -29,5 +30,14 @@ describe('student flow', () => {
     expect(body).toContain('Your Results');
     expect(body).toContain('Module grades');
     expect(body).toContain('Waking up the server and calculating estimates...');
+    expect(body).toContain('Edit Fluid/Mechanics grades');
+  });
+
+  it('provides a protected grade-correction admin login', () => {
+    const { body } = render(AdminPage);
+    expect(body).toContain('Grade Correction Admin');
+    expect(body).toContain('Username');
+    expect(body).toContain('Password');
+    expect(body).not.toContain('CJay');
   });
 });

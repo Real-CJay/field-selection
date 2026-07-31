@@ -1,7 +1,12 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { GRADE_TO_GPA, MODULE_GRADES, isModuleGrade } from '$lib/module-grades';
+  import {
+    GRADE_TO_GPA,
+    MODULE_GRADES,
+    getEditableGradeFromGpa,
+    isModuleGrade
+  } from '$lib/module-grades';
   import {
     clearStudentSession,
     getModuleGrades,
@@ -28,6 +33,16 @@
     if (saved) {
       fluidMechanics = saved.fluidMechanics;
       mechanics = saved.mechanics;
+    } else {
+      try {
+        const results = await studentRepository.getResults(session.indexNumber);
+        const fluidGrade = getEditableGradeFromGpa(results?.fluids);
+        const mechanicsGrade = getEditableGradeFromGpa(results?.mechanics);
+        if (isModuleGrade(fluidGrade)) fluidMechanics = fluidGrade;
+        if (isModuleGrade(mechanicsGrade)) mechanics = mechanicsGrade;
+      } catch {
+        message = 'Unable to load your saved grades. You can still select them again.';
+      }
     }
   });
 
