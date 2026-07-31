@@ -41,6 +41,17 @@
     <div class="metric">
       <span>Confidence</span>
       <strong class={`confidence ${confidence.level}`}>{confidence.label}</strong>
+      <details class="confidence-help">
+        <summary>What is confidence?</summary>
+        <p>Confidence is based on the percentage of the 743-student cohort that has submitted.</p>
+        <ul>
+          <li><strong>0–&lt;60%:</strong> Very Low</li>
+          <li><strong>60–&lt;70%:</strong> Low</li>
+          <li><strong>70–&lt;80%:</strong> Medium</li>
+          <li><strong>80–&lt;90%:</strong> Average</li>
+          <li><strong>90–100%:</strong> High</li>
+        </ul>
+      </details>
     </div>
   </div>
 
@@ -207,6 +218,35 @@
   .confidence.high {
     background: #15803d;
     color: #ffffff;
+  }
+
+  .confidence-help {
+    margin-top: 8px;
+    color: #4b5563;
+    font-size: 0.78rem;
+  }
+
+  .confidence-help summary {
+    width: fit-content;
+    color: #1d4ed8;
+    cursor: pointer;
+    font-weight: 600;
+  }
+
+  .confidence-help p {
+    margin: 8px 0 5px;
+    line-height: 1.4;
+  }
+
+  .confidence-help ul {
+    margin: 0;
+    padding-left: 18px;
+    line-height: 1.5;
+  }
+
+  .confidence-help li strong {
+    display: inline;
+    font-size: inherit;
   }
 
   .cutoffs {

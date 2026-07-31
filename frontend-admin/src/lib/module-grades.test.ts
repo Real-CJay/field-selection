@@ -4,7 +4,8 @@ import {
   MODULE_GRADES,
   getGradeFromGpa,
   isModuleGrade,
-  isModuleGrades
+  isModuleGrades,
+  hasSubmittedModuleGrades
 } from './module-grades';
 
 describe('module grades', () => {
@@ -42,5 +43,15 @@ describe('module grades', () => {
     expect(GRADE_TO_GPA.F).toBe(0);
     expect(getGradeFromGpa(3.7)).toBe('A-');
     expect(getGradeFromGpa(4)).toBe('A / A+');
+  });
+});
+
+describe('submitted module grades', () => {
+  it('requires both Fluid Mechanics and Mechanics results', () => {
+    expect(hasSubmittedModuleGrades({ index_number: '220001A', fluids: 3.7, mechanics: 3.3 })).toBe(
+      true
+    );
+    expect(hasSubmittedModuleGrades({ index_number: '220001A', fluids: 3.7 })).toBe(false);
+    expect(hasSubmittedModuleGrades(null)).toBe(false);
   });
 });

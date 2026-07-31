@@ -1,14 +1,27 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { getStudentEntryRoute } from '$lib/navigation';
+  import { getReturningStudentRoute } from '$lib/navigation';
   import { getModuleGrades, getStudentSession } from '$lib/session';
+  import { studentRepository } from '$lib/student-repository';
 
-  onMount(() => {
+  onMount(async () => {
     const session = getStudentSession();
-    goto(getStudentEntryRoute(Boolean(session), Boolean(getModuleGrades())), {
-      replaceState: true
-    });
+    if (!session) {
+      await goto('/login', { replaceState: true });
+      return;
+    }
+
+    try {
+      const route = await getReturningStudentRoute(
+        session.indexNumber,
+        studentRepository.getResults,
+        studentRepository.getPreferences
+      );
+      await goto(route, { replaceState: true });
+    } catch {
+      await goto(getModuleGrades() ? '/preferences' : '/module-grades', { replaceState: true });
+    }
   });
 </script>
 

@@ -21,7 +21,7 @@ function memoryStorage(): Storage {
 
 describe('student session', () => {
   beforeEach(() => {
-    Object.defineProperty(globalThis, 'sessionStorage', {
+    Object.defineProperty(globalThis, 'localStorage', {
       configurable: true,
       value: memoryStorage()
     });
@@ -42,7 +42,7 @@ describe('student session', () => {
   });
 
   it('rejects malformed session data', () => {
-    sessionStorage.setItem('field-selection-student', '{bad json');
+    localStorage.setItem('field-selection-student', '{bad json');
     expect(getStudentSession()).toBeNull();
   });
 
@@ -59,13 +59,13 @@ describe('student session', () => {
   });
 
   it('rejects missing or unsupported module grades', () => {
-    sessionStorage.setItem(
+    localStorage.setItem(
       'field-selection-module-grades',
       JSON.stringify({ fluidMechanics: 'A', mechanics: 'E' })
     );
     expect(getModuleGrades()).toBeNull();
 
-    sessionStorage.setItem(
+    localStorage.setItem(
       'field-selection-module-grades',
       JSON.stringify({ fluidMechanics: 'A' })
     );

@@ -8,6 +8,7 @@
     rankingsToPreferences,
     validateRankings
   } from '$lib/preferences';
+  import { hasSubmittedModuleGrades } from '$lib/module-grades';
   import {
     clearStudentSession,
     getModuleGrades,
@@ -35,13 +36,15 @@
       await goto('/login', { replaceState: true });
       return;
     }
-    if (!getModuleGrades()) {
-      await goto('/module-grades', { replaceState: true });
-      return;
-    }
-
     try {
-      const saved = await studentRepository.getPreferences(session.indexNumber);
+      const [saved, results] = await Promise.all([
+        studentRepository.getPreferences(session.indexNumber),
+        studentRepository.getResults(session.indexNumber)
+      ]);
+      if (!getModuleGrades() && !hasSubmittedModuleGrades(results)) {
+        await goto('/module-grades', { replaceState: true });
+        return;
+      }
       if (saved) rankings = preferencesToRankings(saved);
     } catch {
       errorMessage = 'Unable to load saved preferences. Please try again.';

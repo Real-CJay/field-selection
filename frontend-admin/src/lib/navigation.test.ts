@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   POST_PREFERENCES_ROUTE,
   getStudentEntryRoute,
-  getStudentResultsEntryRoute
+  getStudentResultsEntryRoute,
+  getReturningStudentRoute
 } from './navigation';
 
 describe('student entry routing', () => {
@@ -29,5 +30,18 @@ describe('results routing', () => {
 
   it('sends a successful preference submission to results', () => {
     expect(POST_PREFERENCES_ROUTE).toBe('/results');
+  });
+
+  it('returns a previously completed student directly to results', async () => {
+    await expect(
+      getReturningStudentRoute(
+        '220001A',
+        async () => ({ index_number: '220001A', fluids: 3.7, mechanics: 3.3 }),
+        async () =>
+          ({ index_number: '220001A' }) as Awaited<
+            ReturnType<Parameters<typeof getReturningStudentRoute>[2]>
+          >
+      )
+    ).resolves.toBe('/results');
   });
 });

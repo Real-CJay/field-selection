@@ -6,11 +6,10 @@
   import AllocationLoading from '$lib/components/AllocationLoading.svelte';
   import AllocationResults from '$lib/components/AllocationResults.svelte';
   import AllocationStatus from '$lib/components/AllocationStatus.svelte';
-  import { getGradeFromGpa } from '$lib/module-grades';
+  import { getGradeFromGpa, hasSubmittedModuleGrades } from '$lib/module-grades';
   import { getStudentResultsEntryRoute } from '$lib/navigation';
   import {
     clearStudentSession,
-    getModuleGrades,
     getStudentSession
   } from '$lib/session';
   import { studentRepository } from '$lib/student-repository';
@@ -39,25 +38,26 @@
   onMount(async () => {
     const activeSession = getStudentSession();
     session = activeSession;
-    const initialRoute = getStudentResultsEntryRoute(
-      Boolean(activeSession),
-      Boolean(getModuleGrades()),
-      true
-    );
-    if (initialRoute !== '/results') {
-      await goto(initialRoute, { replaceState: true });
+    if (!activeSession) {
+      await goto('/login', { replaceState: true });
       return;
     }
-    if (!activeSession) return;
 
     try {
-      const preferences = await studentRepository.getPreferences(activeSession.indexNumber);
-      const verifiedRoute = getStudentResultsEntryRoute(true, true, Boolean(preferences));
+      const [preferences, savedResults] = await Promise.all([
+        studentRepository.getPreferences(activeSession.indexNumber),
+        studentRepository.getResults(activeSession.indexNumber)
+      ]);
+      const verifiedRoute = getStudentResultsEntryRoute(
+        true,
+        hasSubmittedModuleGrades(savedResults),
+        Boolean(preferences)
+      );
       if (verifiedRoute !== '/results') {
         await goto(verifiedRoute, { replaceState: true });
         return;
       }
-      studentResults = await studentRepository.getResults(activeSession.indexNumber);
+      studentResults = savedResults;
       if (!studentResults) resultsError = 'No module results were found for this student.';
     } catch {
       resultsError = 'Unable to load your module results. Please try again.';

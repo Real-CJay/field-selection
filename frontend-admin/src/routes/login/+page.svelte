@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { getStudentEntryRoute } from '$lib/navigation';
+  import { getReturningStudentRoute } from '$lib/navigation';
   import { authenticateStudent } from '$lib/student-auth';
   import {
     getModuleGrades,
@@ -15,11 +15,19 @@
   let loading = $state(false);
   let message = $state('');
 
-  onMount(() => {
-    if (getStudentSession()) {
-      goto(getStudentEntryRoute(true, Boolean(getModuleGrades())), {
-        replaceState: true
-      });
+  onMount(async () => {
+    const session = getStudentSession();
+    if (!session) return;
+
+    try {
+      const route = await getReturningStudentRoute(
+        session.indexNumber,
+        studentRepository.getResults,
+        studentRepository.getPreferences
+      );
+      await goto(route, { replaceState: true });
+    } catch {
+      await goto(getModuleGrades() ? '/preferences' : '/module-grades', { replaceState: true });
     }
   });
 
@@ -44,7 +52,16 @@
       indexNumber: result.student.index_number,
       name: result.student.name
     });
-    await goto('/module-grades');
+    try {
+      const route = await getReturningStudentRoute(
+        result.student.index_number,
+        studentRepository.getResults,
+        studentRepository.getPreferences
+      );
+      await goto(route);
+    } catch {
+      await goto('/module-grades');
+    }
   }
 </script>
 

@@ -1,4 +1,4 @@
-import type { ModuleGrade, ModuleGrades } from './types';
+import type { ModuleGrade, ModuleGrades, StudentResults } from './types';
 
 export const MODULE_GRADES: readonly ModuleGrade[] = [
   'A+',
@@ -44,4 +44,8 @@ export function getGradeFromGpa(gpa: number | null | undefined): string {
   if (gpa === 4) return 'A / A+';
 
   return MODULE_GRADES.find((grade) => GRADE_TO_GPA[grade] === gpa) ?? 'Not available';
+}
+
+export function hasSubmittedModuleGrades(results: StudentResults | null): boolean {
+  return typeof results?.fluids === 'number' && typeof results.mechanics === 'number';
 }
