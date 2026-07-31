@@ -34,13 +34,20 @@
     <div class="metric">
       <span>Accuracy</span>
       <strong>{result.accuracy_percentage.toFixed(1)}%</strong>
-      <small>{result.total_students_processed} / 743 students submitted</small>
+      <small class="submission-count"
+        >{result.total_students_processed} / 743 students submitted</small
+      >
     </div>
     <div class="metric">
       <span>Confidence</span>
       <strong class={`confidence ${confidence.level}`}>{confidence.label}</strong>
     </div>
   </div>
+
+  <aside class="disclaimer" aria-label="Important result disclaimer">
+    <strong>Important:</strong>
+    <span>{ALLOCATION_DISCLAIMER}</span>
+  </aside>
 
   <div class="cutoffs">
     <h3>Current estimated cut-offs</h3>
@@ -74,10 +81,6 @@
     </div>
   </div>
 
-  <aside class="disclaimer" aria-label="Important result disclaimer">
-    <strong>Important:</strong>
-    <span>{ALLOCATION_DISCLAIMER}</span>
-  </aside>
 </section>
 
 <style>
@@ -165,6 +168,13 @@
 
   .metric small {
     margin-top: 4px;
+  }
+
+  .metric .submission-count {
+    margin-top: 6px;
+    color: #4b5563;
+    font-size: 0.95rem;
+    font-weight: 600;
   }
 
   .confidence {

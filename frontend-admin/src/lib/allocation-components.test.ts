@@ -41,6 +41,8 @@ describe('allocation components', () => {
     expect(body).toContain('Very Low');
     expect(body).toContain('Open');
     expect(body).toContain('These are NOT final university results');
+    expect(body).toContain('encourage other students');
+    expect(body.indexOf('Important:')).toBeLessThan(body.indexOf('Current estimated cut-offs'));
   });
 
   it('renders the Render cold-start loading state', () => {

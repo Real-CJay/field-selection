@@ -5,7 +5,7 @@ export const ALLOCATION_LOADING_TITLE = 'Waking up the server and calculating es
 export const ALLOCATION_LOADING_DESCRIPTION =
   'The first request can take 50–60 seconds while the server starts. Please keep this page open.';
 export const ALLOCATION_DISCLAIMER =
-  'These cut-offs and placements are live estimates based on current student submissions. These are NOT final university results and your placement will fluctuate as more students enter their data.';
+  'These cut-offs and placements are live estimates based on current student submissions. These are NOT final university results and your placement will fluctuate as more students enter their data. Please encourage other students to complete the module grades and field preference form so these estimates become more reliable.';
 
 export type AllocationErrorKind = 'not-found' | 'http' | 'network' | 'invalid-response';
 export type AllocationErrorState = 'not-found' | 'error';
