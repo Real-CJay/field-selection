@@ -1,0 +1,49 @@
+begin;
+
+alter table public.grade_correction_requests
+  drop constraint if exists grade_correction_requests_current_grade_check;
+alter table public.grade_correction_requests
+  drop constraint if exists grade_correction_requests_status_check;
+alter table public.grade_correction_requests
+  add column if not exists reverted_at timestamptz;
+
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'grade_correction_requests'
+      and column_name = 'current_grade'
+      and data_type <> 'text'
+  ) then
+    execute $migration$
+      alter table public.grade_correction_requests
+        alter column current_grade type text
+        using case
+          when current_grade::numeric = 4.0 then 'A / A+'
+          when current_grade::numeric = 3.7 then 'A-'
+          when current_grade::numeric = 3.3 then 'B+'
+          when current_grade::numeric = 3.0 then 'B'
+          when current_grade::numeric = 2.7 then 'B-'
+          when current_grade::numeric = 2.3 then 'C+'
+          when current_grade::numeric = 2.0 then 'C'
+          when current_grade::numeric = 1.7 then 'C-'
+          when current_grade::numeric = 1.0 then 'D'
+          when current_grade::numeric = 0.0 then 'F'
+          else 'Not available'
+        end
+    $migration$;
+  end if;
+end $$;
+
+alter table public.grade_correction_requests
+  alter column current_grade set not null,
+  add constraint grade_correction_requests_current_grade_check
+    check (current_grade in ('A / A+', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D', 'F', 'Not available')),
+  add constraint grade_correction_requests_status_check
+    check (status in ('pending', 'approved', 'rejected', 'superseded', 'reverted'));
+
+revoke all on table public.grade_correction_requests from anon, authenticated;
+grant select, insert, update on table public.grade_correction_requests to service_role;
+
+commit;

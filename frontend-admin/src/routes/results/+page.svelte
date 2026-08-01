@@ -118,6 +118,16 @@
     </div>
   </header>
 
+  <div class="allocation-section">
+    {#if allocation}
+      <AllocationResults result={allocation} />
+    {:else if allocationState === 'loading'}
+      <AllocationLoading />
+    {:else}
+      <AllocationStatus state={allocationState} />
+    {/if}
+  </div>
+
   <section class="card subject-card" aria-labelledby="module-results-heading">
     <h2 id="module-results-heading">Module grades</h2>
     {#if resultsLoading}
@@ -172,15 +182,6 @@
     {/if}
   </section>
 
-  <div class="allocation-section">
-    {#if allocation}
-      <AllocationResults result={allocation} />
-    {:else if allocationState === 'loading'}
-      <AllocationLoading />
-    {:else}
-      <AllocationStatus state={allocationState} />
-    {/if}
-  </div>
 </main>
 
 <style>

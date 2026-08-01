@@ -33,11 +33,11 @@ describe('student flow', () => {
     expect(body).toContain('Edit Fluid/Mechanics grades');
   });
 
-  it('provides a protected grade-correction admin login', () => {
+  it('provides the protected admin dashboard shell', () => {
     const { body } = render(AdminPage);
-    expect(body).toContain('Grade Correction Admin');
-    expect(body).toContain('Username');
-    expect(body).toContain('Password');
-    expect(body).not.toContain('CJay');
+    expect(body).toContain('Field Selection Admin');
+    expect(body).toContain('Student full records');
+    expect(body).toContain('Recorrection requests');
+    expect(body).toContain('Departments');
   });
 });

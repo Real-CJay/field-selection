@@ -30,7 +30,7 @@ export async function submitGradeCorrection(
   if (!response.ok) throw new Error(await readError(response));
 }
 
-function authorization(username: string, password: string): string {
+export function basicAuthorization(username: string, password: string): string {
   return `Basic ${btoa(`${username}:${password}`)}`;
 }
 
@@ -40,7 +40,7 @@ export async function getCorrectionRequests(
   fetcher: typeof fetch = fetch
 ): Promise<GradeCorrectionRequest[]> {
   const response = await fetcher(`${apiBaseUrl()}/api/admin/correction-requests`, {
-    headers: { Authorization: authorization(username, password) }
+    headers: { Authorization: basicAuthorization(username, password) }
   });
   if (!response.ok) throw new Error(await readError(response));
   return (await response.json()).requests;
@@ -56,10 +56,24 @@ export async function reviewCorrectionRequest(
   const response = await fetcher(`${apiBaseUrl()}/api/admin/correction-requests/${id}`, {
     method: 'PATCH',
     headers: {
-      Authorization: authorization(username, password),
+      Authorization: basicAuthorization(username, password),
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({ decision })
+  });
+  if (!response.ok) throw new Error(await readError(response));
+}
+
+
+export async function revertCorrectionRequest(
+  id: number,
+  username: string,
+  password: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const response = await fetcher(`${apiBaseUrl()}/api/admin/correction-requests/${id}/revert`, {
+    method: 'POST',
+    headers: { Authorization: basicAuthorization(username, password) }
   });
   if (!response.ok) throw new Error(await readError(response));
 }

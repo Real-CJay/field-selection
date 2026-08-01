@@ -11,18 +11,24 @@ const result: AllocationResult = {
   name: 'Test Student',
   assigned_department: 'computer',
   average_gpa: 3.8214,
+  allocation_gpa: 3.82,
   student_rank: 12,
+  allocation_status: 'certain',
+  possible_departments: ['computer'],
+  border_departments: [],
+  guaranteed_department: 'computer',
+  allocation_explanation: null,
   cutoffs: {
-    biomedical: 3.42,
-    chemical: 3.15,
-    civil: null,
-    computer: 3.81,
-    electrical: 3.5,
-    electronic: 3.55,
-    material: 3.1,
-    mechanical: 3.25,
-    aeronautical: null,
-    mechatronics: 3.6
+    biomedical: { status: 'fixed', value: 3.42, incomplete: false },
+    chemical: { status: 'fixed', value: 3.15, incomplete: false },
+    civil: { status: 'open', incomplete: false },
+    computer: { status: 'fixed', value: 3.81, incomplete: false },
+    electrical: { status: 'fixed', value: 3.5, incomplete: false },
+    electronic: { status: 'fixed', value: 3.55, incomplete: false },
+    material: { status: 'fixed', value: 3.1, incomplete: false },
+    mechanical: { status: 'fixed', value: 3.25, incomplete: false },
+    aeronautical: { status: 'open', incomplete: false },
+    mechatronics: { status: 'fixed', value: 3.6, incomplete: false }
   },
   total_students_processed: 45,
   accuracy_percentage: 6.1
@@ -46,6 +52,23 @@ describe('allocation components', () => {
     expect(body).toContain('What is confidence?');
     expect(body).toContain('0–&lt;60%:');
     expect(body).toContain('90–100%:');
+    expect(body).toContain('View GPA distribution');
+  });
+
+  it('renders border departments and the guaranteed fallback', () => {
+    const borderResult: AllocationResult = {
+      ...result,
+      assigned_department: null,
+      allocation_status: 'border',
+      possible_departments: ['computer', 'electrical', 'mechanical'],
+      border_departments: ['computer', 'electrical'],
+      guaranteed_department: 'mechanical',
+      allocation_explanation: 'Subject marks are needed to resolve the higher choices.'
+    };
+    const { body } = render(AllocationResults, { props: { result: borderResult } });
+    expect(body).toContain('Placement is on a border');
+    expect(body).toContain('Computer Science and Engineering, Electrical Engineering');
+    expect(body).toContain('guaranteed Mechanical Engineering or a higher-ranked');
   });
 
   it('renders the Render cold-start loading state', () => {

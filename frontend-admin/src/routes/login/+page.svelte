@@ -1,11 +1,11 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { onMount } from 'svelte';
+  import { authenticateAdmin } from '$lib/admin-client';
+  import { setAdminCredentials } from '$lib/admin-session';
   import { getReturningStudentRoute } from '$lib/navigation';
   import { authenticateStudent } from '$lib/student-auth';
   import {
-    getModuleGrades,
-    getStudentSession,
+    clearStudentSession,
     saveStudentSession
   } from '$lib/session';
   import { studentRepository } from '$lib/student-repository';
@@ -15,26 +15,25 @@
   let loading = $state(false);
   let message = $state('');
 
-  onMount(async () => {
-    const session = getStudentSession();
-    if (!session) return;
-
-    try {
-      const route = await getReturningStudentRoute(
-        session.indexNumber,
-        studentRepository.getResults,
-        studentRepository.getPreferences
-      );
-      await goto(route, { replaceState: true });
-    } catch {
-      await goto(getModuleGrades() ? '/preferences' : '/module-grades', { replaceState: true });
-    }
-  });
-
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     loading = true;
     message = '';
+
+    if (indexNumber.trim().toLowerCase() === 'cjay') {
+      try {
+        const adminUsername = 'CJay';
+        await authenticateAdmin(adminUsername, password);
+        clearStudentSession();
+        setAdminCredentials({ username: adminUsername, password });
+        await goto('/admin');
+      } catch (error) {
+        message = error instanceof Error ? error.message : 'Invalid administrator credentials.';
+      } finally {
+        loading = false;
+      }
+      return;
+    }
 
     const result = await authenticateStudent(
       indexNumber,
@@ -74,7 +73,7 @@
 
     <form onsubmit={submit}>
       <div class="field">
-        <label for="index-number">Student index number</label>
+        <label for="index-number">Student index number or admin username</label>
         <input
           class="input"
           id="index-number"

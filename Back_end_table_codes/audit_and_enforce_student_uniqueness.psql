@@ -1,0 +1,64 @@
+begin;
+
+-- Keep a recoverable copy of any duplicate preference rows before cleanup.
+create table if not exists public.student_preferences_duplicate_backup
+as select * from public.student_preferences where false;
+
+insert into public.student_preferences_duplicate_backup
+select duplicate_row.*
+from (
+  select preferences.ctid as source_ctid,
+         preferences.*,
+         row_number() over (
+           partition by index_number
+           order by submitted_at desc nulls last, ctid desc
+         ) as duplicate_position
+  from public.student_preferences as preferences
+) as ranked
+join public.student_preferences as duplicate_row
+  on duplicate_row.ctid = ranked.source_ctid
+where ranked.duplicate_position > 1;
+
+delete from public.student_preferences as preferences
+using (
+  select ctid,
+         row_number() over (
+           partition by index_number
+           order by submitted_at desc nulls last, ctid desc
+         ) as duplicate_position
+  from public.student_preferences
+) as ranked
+where preferences.ctid = ranked.ctid
+  and ranked.duplicate_position > 1;
+
+do $$
+begin
+  if exists (
+    select index_number from public.students group by index_number having count(*) > 1
+  ) then
+    raise exception 'Duplicate students exist; identity conflicts require manual review.';
+  end if;
+  if exists (
+    select index_number from public.student_results group by index_number having count(*) > 1
+  ) then
+    raise exception 'Duplicate student results exist; grade conflicts require manual review.';
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'student_preferences_index_number_key'
+      and conrelid = 'public.student_preferences'::regclass
+  ) then
+    alter table public.student_preferences
+      add constraint student_preferences_index_number_key unique (index_number);
+  end if;
+end $$;
+
+create unique index if not exists one_pending_grade_request_per_module
+  on public.grade_correction_requests (index_number, module)
+  where status = 'pending';
+
+commit;

@@ -6,6 +6,7 @@ import {
   AllocationRequestError,
   createAllocationClient,
   formatCutoff,
+  departmentsByDescendingCutoff,
   formatGpa,
   getAllocationErrorState,
   getConfidence,
@@ -19,18 +20,24 @@ const responseBody = {
   name: 'Test Student',
   assigned_department: 'computer',
   average_gpa: 3.8214,
+  allocation_gpa: 3.82,
   student_rank: 12,
+  allocation_status: 'certain',
+  possible_departments: ['computer'],
+  border_departments: [],
+  guaranteed_department: 'computer',
+  allocation_explanation: null,
   cutoffs: {
-    biomedical: 3.42,
-    chemical: 3.15,
-    civil: null,
-    computer: 3.81,
-    electrical: 3.5,
-    electronic: 3.55,
-    material: 3.1,
-    mechanical: 3.25,
-    aeronautical: null,
-    mechatronics: 3.6
+    biomedical: { status: 'fixed', value: 3.42, incomplete: false },
+    chemical: { status: 'fixed', value: 3.15, incomplete: false },
+    civil: { status: 'open', incomplete: false },
+    computer: { status: 'fixed', value: 3.81, incomplete: false },
+    electrical: { status: 'fixed', value: 3.5, incomplete: false },
+    electronic: { status: 'fixed', value: 3.55, incomplete: false },
+    material: { status: 'fixed', value: 3.1, incomplete: false },
+    mechanical: { status: 'fixed', value: 3.25, incomplete: false },
+    aeronautical: { status: 'open', incomplete: false },
+    mechatronics: { status: 'range', min: 3.57, max: 3.6, open_possible: false, incomplete: false }
   },
   total_students_processed: 45,
   accuracy_percentage: 6.1
@@ -60,10 +67,21 @@ describe('allocation results', () => {
     expect(getDepartmentName('computer')).toBe('Computer Science and Engineering');
   });
 
-  it('formats GPA and cutoffs at four decimal places', () => {
-    expect(formatCutoff(null)).toBe('Open');
-    expect(formatCutoff(3.815)).toBe('3.8150');
+  it('formats display GPA at four decimals and allocation cutoffs at two decimals', () => {
+    expect(formatCutoff({ status: 'open', incomplete: false })).toBe('Open');
+    expect(formatCutoff({ status: 'fixed', value: 3.815, incomplete: false })).toBe('3.81');
+    expect(formatCutoff({
+      status: 'range', min: 3.57, max: 3.6, open_possible: false, incomplete: false
+    })).toBe('3.57–3.60');
     expect(formatGpa(3.82)).toBe('3.8200');
+  });
+
+  it('sorts cutoff departments descending and keeps open quotas last', () => {
+    const sorted = departmentsByDescendingCutoff(responseBody.cutoffs);
+    expect(sorted.map(({ id }) => id)).toEqual([
+      'computer', 'mechatronics', 'electronic', 'electrical', 'biomedical',
+      'mechanical', 'chemical', 'material', 'civil', 'aeronautical'
+    ]);
   });
 
   it('maps every confidence boundary', () => {
