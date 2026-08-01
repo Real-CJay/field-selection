@@ -91,7 +91,9 @@ describe('allocation results', () => {
     expect(getConfidence(70).label).toBe('Medium');
     expect(getConfidence(80).label).toBe('Average');
     expect(getConfidence(90).label).toBe('High');
-    expect(getConfidence(100).label).toBe('High');
+    expect(getConfidence(94.9).label).toBe('High');
+    expect(getConfidence(95).label).toBe('Very High');
+    expect(getConfidence(100).label).toBe('Very High');
   });
 
   it('provides the required loading and disclaimer copy', () => {

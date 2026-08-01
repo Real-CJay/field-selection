@@ -14,11 +14,11 @@ export const ALLOCATION_DISCLAIMER =
 
 export type AllocationErrorKind = 'not-found' | 'http' | 'network' | 'invalid-response';
 export type AllocationErrorState = 'not-found' | 'error';
-export type ConfidenceLevel = 'very-low' | 'low' | 'medium' | 'average' | 'high';
+export type ConfidenceLevel = 'very-low' | 'low' | 'medium' | 'average' | 'high' | 'very-high';
 
 export interface Confidence {
   level: ConfidenceLevel;
-  label: 'Very Low' | 'Low' | 'Medium' | 'Average' | 'High';
+  label: 'Very Low' | 'Low' | 'Medium' | 'Average' | 'High' | 'Very High';
 }
 
 export class AllocationRequestError extends Error {
@@ -243,7 +243,8 @@ export function getConfidence(accuracyPercentage: number): Confidence {
   if (accuracyPercentage < 70) return { level: 'low', label: 'Low' };
   if (accuracyPercentage < 80) return { level: 'medium', label: 'Medium' };
   if (accuracyPercentage < 90) return { level: 'average', label: 'Average' };
-  return { level: 'high', label: 'High' };
+  if (accuracyPercentage < 95) return { level: 'high', label: 'High' };
+  return { level: 'very-high', label: 'Very High' };
 }
 
 export function getAllocationErrorState(error: unknown): AllocationErrorState {

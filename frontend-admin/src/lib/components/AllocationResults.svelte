@@ -207,7 +207,8 @@
           <li><strong>60–&lt;70%:</strong> Low</li>
           <li><strong>70–&lt;80%:</strong> Medium</li>
           <li><strong>80–&lt;90%:</strong> Average</li>
-          <li><strong>90–100%:</strong> High</li>
+          <li><strong>90–&lt;95%:</strong> High</li>
+          <li><strong>95–100%:</strong> Very High</li>
         </ul>
       </details>
     </div>
@@ -586,6 +587,11 @@
 
   .confidence.high {
     background: #15803d;
+    color: #ffffff;
+  }
+
+  .confidence.very-high {
+    background: #14532d;
     color: #ffffff;
   }
 
