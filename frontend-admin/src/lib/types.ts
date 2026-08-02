@@ -68,16 +68,22 @@ export interface StudentPreferences {
   submitted_at?: string;
 }
 
+type SeatFill = {
+  selected_min: number;
+  selected_max: number;
+  quota: number;
+};
+
 export type CutoffEstimate =
-  | { status: 'open'; incomplete: boolean }
-  | { status: 'fixed'; value: number; incomplete: boolean }
+  | (SeatFill & { status: 'open'; incomplete: boolean })
+  | (SeatFill & { status: 'fixed'; value: number; incomplete: boolean })
   | {
       status: 'range';
       min: number;
       max: number;
       open_possible: boolean;
       incomplete: boolean;
-    };
+    } & SeatFill;
 
 export type DepartmentCutoffs = Record<DepartmentId, CutoffEstimate>;
 

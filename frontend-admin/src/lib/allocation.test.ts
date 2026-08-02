@@ -14,6 +14,8 @@ import {
   parseAllocationResult
 } from './allocation';
 
+const seat = { selected_min: 1, selected_max: 1, quota: 10 };
+
 const responseBody = {
   status: 'success',
   index_number: '250001E',
@@ -28,16 +30,16 @@ const responseBody = {
   guaranteed_department: 'computer',
   allocation_explanation: null,
   cutoffs: {
-    biomedical: { status: 'fixed', value: 3.42, incomplete: false },
-    chemical: { status: 'fixed', value: 3.15, incomplete: false },
-    civil: { status: 'open', incomplete: false },
-    computer: { status: 'fixed', value: 3.81, incomplete: false },
-    electrical: { status: 'fixed', value: 3.5, incomplete: false },
-    electronic: { status: 'fixed', value: 3.55, incomplete: false },
-    material: { status: 'fixed', value: 3.1, incomplete: false },
-    mechanical: { status: 'fixed', value: 3.25, incomplete: false },
-    aeronautical: { status: 'open', incomplete: false },
-    mechatronics: { status: 'range', min: 3.57, max: 3.6, open_possible: false, incomplete: false }
+    biomedical: { ...seat, status: 'fixed', value: 3.42, incomplete: false },
+    chemical: { ...seat, status: 'fixed', value: 3.15, incomplete: false },
+    civil: { ...seat, status: 'open', incomplete: false },
+    computer: { ...seat, status: 'fixed', value: 3.81, incomplete: false },
+    electrical: { ...seat, status: 'fixed', value: 3.5, incomplete: false },
+    electronic: { ...seat, status: 'fixed', value: 3.55, incomplete: false },
+    material: { ...seat, status: 'fixed', value: 3.1, incomplete: false },
+    mechanical: { ...seat, status: 'fixed', value: 3.25, incomplete: false },
+    aeronautical: { ...seat, status: 'open', incomplete: false },
+    mechatronics: { ...seat, status: 'range', min: 3.57, max: 3.6, open_possible: false, incomplete: false }
   },
   total_students_processed: 45,
   accuracy_percentage: 6.1
@@ -68,10 +70,10 @@ describe('allocation results', () => {
   });
 
   it('formats display GPA at four decimals and allocation cutoffs at two decimals', () => {
-    expect(formatCutoff({ status: 'open', incomplete: false })).toBe('Open');
-    expect(formatCutoff({ status: 'fixed', value: 3.815, incomplete: false })).toBe('3.81');
+    expect(formatCutoff({ ...seat, status: 'open', incomplete: false })).toBe('Open');
+    expect(formatCutoff({ ...seat, status: 'fixed', value: 3.815, incomplete: false })).toBe('3.81');
     expect(formatCutoff({
-      status: 'range', min: 3.57, max: 3.6, open_possible: false, incomplete: false
+      ...seat, status: 'range', min: 3.57, max: 3.6, open_possible: false, incomplete: false
     })).toBe('3.57–3.60');
     expect(formatGpa(3.82)).toBe('3.8200');
   });

@@ -220,8 +220,8 @@ def test_cutoffs_and_anonymous_department_groups_use_two_decimal_gpa():
         students, {"computer": 1, "civil": 1}
     )
     assert aggregate_cutoffs(states, overflow) == {
-        "computer": {"status": "fixed", "value": 3.83, "incomplete": False},
-        "civil": {"status": "fixed", "value": 3.82, "incomplete": False},
+        "computer": {"status": "fixed", "value": 3.83, "incomplete": False, "selected_min": 1, "selected_max": 1, "quota": 200},
+        "civil": {"status": "fixed", "value": 3.82, "incomplete": False, "selected_min": 1, "selected_max": 1, "quota": 125},
     }
     assert aggregate_department_gpas("computer", states, processed, overflow) == [
         {"gpa": 3.83, "min_count": 1, "max_count": 1}

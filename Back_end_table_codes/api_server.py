@@ -497,16 +497,27 @@ def aggregate_cutoffs(
 ) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     for department in states[0].cutoffs_dict():
+        selected_counts = [
+            sum(assigned == department for _, assigned in state.assignments)
+            for state in states
+        ]
+        seat_fill = {
+            "selected_min": min(selected_counts, default=0),
+            "selected_max": max(selected_counts, default=0),
+            "quota": BASE_QUOTAS[department],
+        }
         values = [state.cutoffs_dict()[department] for state in states]
         numeric = sorted({value for value in values if value is not None})
         open_possible = any(value is None for value in values)
         if not numeric:
-            result[department] = {"status": "open", "incomplete": overflow_gpa is not None}
+            result[department] = {
+                "status": "open", "incomplete": overflow_gpa is not None, **seat_fill
+            }
         elif len(numeric) == 1 and not open_possible:
             result[department] = {
                 "status": "fixed",
                 "value": float(numeric[0]),
-                "incomplete": overflow_gpa is not None,
+                "incomplete": overflow_gpa is not None, **seat_fill,
             }
         else:
             result[department] = {
@@ -514,7 +525,7 @@ def aggregate_cutoffs(
                 "min": float(numeric[0]),
                 "max": float(numeric[-1]),
                 "open_possible": open_possible,
-                "incomplete": overflow_gpa is not None,
+                "incomplete": overflow_gpa is not None, **seat_fill,
             }
     return result
 

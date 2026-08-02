@@ -40,6 +40,13 @@
     return departments.map(getDepartmentName).join(', ');
   }
 
+  function seatFill(cutoff: AllocationResult['cutoffs'][DepartmentId]): string {
+    const selected = cutoff.selected_min === cutoff.selected_max
+      ? String(cutoff.selected_max)
+      : `${cutoff.selected_min}–${cutoff.selected_max}`;
+    return `${selected} / ${cutoff.quota} seats filled`;
+  }
+
   function resultHeading(): string {
     if (result.assigned_department) return getDepartmentName(result.assigned_department);
     if (result.allocation_status === 'border') return 'Placement is on a border';
@@ -261,6 +268,7 @@
                   onclick={() => toggleDepartment(department.id)}
                 >
                   {department.name}
+                  <small class="seat-fill">{seatFill(result.cutoffs[department.id])}</small>
                   <span>{selectedDepartment === department.id ? 'Hide GPA distribution' : 'View GPA distribution'}</span>
                 </button>
                 {#if department.id === result.assigned_department}
@@ -683,6 +691,12 @@
     color: #1d4ed8;
     font-size: 0.75rem;
     font-weight: 500;
+  }
+
+  .department-button .seat-fill {
+    color: #4b5563;
+    font-size: .78rem;
+    font-weight: 600;
   }
 
   .distribution-row td {

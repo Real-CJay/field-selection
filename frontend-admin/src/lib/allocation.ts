@@ -57,9 +57,21 @@ function readCutoff(value: unknown, department: DepartmentId): CutoffEstimate {
   if (!isRecord(value) || typeof value.status !== 'string' || typeof value.incomplete !== 'boolean') {
     throw new AllocationRequestError('invalid-response', `Allocation cutoff for ${department} is invalid.`);
   }
-  if (value.status === 'open') return { status: 'open', incomplete: value.incomplete };
+  if (
+    typeof value.selected_min !== 'number' || !Number.isInteger(value.selected_min) ||
+    typeof value.selected_max !== 'number' || !Number.isInteger(value.selected_max) ||
+    typeof value.quota !== 'number' || !Number.isInteger(value.quota)
+  ) {
+    throw new AllocationRequestError('invalid-response', `Seat fill for ${department} is invalid.`);
+  }
+  const seatFill = {
+    selected_min: value.selected_min,
+    selected_max: value.selected_max,
+    quota: value.quota
+  };
+  if (value.status === 'open') return { status: 'open', incomplete: value.incomplete, ...seatFill };
   if (value.status === 'fixed' && typeof value.value === 'number' && Number.isFinite(value.value)) {
-    return { status: 'fixed', value: value.value, incomplete: value.incomplete };
+    return { status: 'fixed', value: value.value, incomplete: value.incomplete, ...seatFill };
   }
   if (
     value.status === 'range' &&
@@ -69,7 +81,7 @@ function readCutoff(value: unknown, department: DepartmentId): CutoffEstimate {
   ) {
     return {
       status: 'range', min: value.min, max: value.max,
-      open_possible: value.open_possible, incomplete: value.incomplete
+      open_possible: value.open_possible, incomplete: value.incomplete, ...seatFill
     };
   }
   throw new AllocationRequestError('invalid-response', `Allocation cutoff for ${department} is invalid.`);
