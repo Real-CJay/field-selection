@@ -4,6 +4,8 @@
   import { setAdminCredentials } from '$lib/admin-session';
   import { getReturningStudentRoute } from '$lib/navigation';
   import { authenticateStudent } from '$lib/student-auth';
+  import { signInWithPersonalPassword, signOutStudentAuth } from '$lib/student-edit-auth';
+  import { STUDENT_PASSWORD } from '$lib/credentials';
   import {
     clearStudentSession,
     saveStudentSession
@@ -35,11 +37,39 @@
       return;
     }
 
-    const result = await authenticateStudent(
-      indexNumber,
-      password,
-      studentRepository.findStudent
-    );
+    if (password !== STUDENT_PASSWORD) {
+      const auth = await signInWithPersonalPassword(
+        indexNumber,
+        password,
+        studentRepository.findStudentEmail
+      );
+      if (!auth.ok) {
+        message = auth.message;
+        loading = false;
+        return;
+      }
+
+      const student = await studentRepository.findStudent(indexNumber.trim().toUpperCase());
+      if (!student) {
+        message = 'Unable to load the student record. Please try again.';
+        loading = false;
+        return;
+      }
+      saveStudentSession({
+        indexNumber: student.index_number,
+        name: student.name,
+        accessMode: 'editable'
+      });
+      try {
+        await goto(await getReturningStudentRoute(student.index_number, studentRepository.getResults, studentRepository.getPreferences));
+      } catch {
+        await goto('/preferences');
+      }
+      return;
+    }
+
+    await signOutStudentAuth();
+    const result = await authenticateStudent(indexNumber, password, studentRepository.findStudent);
 
     if (!result.ok) {
       message = result.message;
@@ -49,7 +79,8 @@
 
     saveStudentSession({
       indexNumber: result.student.index_number,
-      name: result.student.name
+      name: result.student.name,
+      accessMode: 'read-only'
     });
     try {
       const route = await getReturningStudentRoute(

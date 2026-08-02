@@ -14,6 +14,7 @@
     getStudentSession
   } from '$lib/session';
   import { studentRepository } from '$lib/student-repository';
+  import { signOutStudentAuth } from '$lib/student-edit-auth';
   import type {
     AllocationResult,
     StudentResults,
@@ -79,9 +80,10 @@
     }
   });
 
-  function logout() {
+  async function logout() {
     clearStudentSession();
-    goto('/login');
+    await signOutStudentAuth();
+    await goto('/login');
   }
 
   async function requestCorrection(event: SubmitEvent) {

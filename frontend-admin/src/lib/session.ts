@@ -16,7 +16,12 @@ export function getStudentSession(): StudentSession | null {
       localStorage.removeItem(SESSION_KEY);
       return null;
     }
-    return { indexNumber: parsed.indexNumber, name: parsed.name };
+    return {
+      indexNumber: parsed.indexNumber,
+      name: parsed.name,
+      // Sessions created before OTP editing was added remain read-only.
+      accessMode: parsed.accessMode === 'editable' ? 'editable' : 'read-only'
+    };
   } catch {
     localStorage.removeItem(SESSION_KEY);
     return null;

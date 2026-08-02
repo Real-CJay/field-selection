@@ -15,6 +15,7 @@
   } from '$lib/session';
   import type { ModuleGrade, StudentSession } from '$lib/types';
   import { studentRepository } from '$lib/student-repository';
+  import { signOutStudentAuth } from '$lib/student-edit-auth';
 
   let session = $state<StudentSession | null>(null);
   let fluidMechanics = $state<ModuleGrade | ''>('');
@@ -72,9 +73,10 @@
     }
   }
 
-  function logout() {
+  async function logout() {
     clearStudentSession();
-    goto('/login');
+    await signOutStudentAuth();
+    await goto('/login');
   }
 </script>
 
