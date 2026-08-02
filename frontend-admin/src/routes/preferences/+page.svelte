@@ -18,14 +18,14 @@
   import { studentRepository } from '$lib/student-repository';
   import {
     hasEditableSession,
-    sendPreferenceOtp,
-    signOutStudentAuth,
-    verifyPreferenceOtp
+    sendPreferenceMagicLink,
+    signOutStudentAuth
   } from '$lib/student-edit-auth';
   import { POST_PREFERENCES_ROUTE } from '$lib/navigation';
   import type { StudentRankings, StudentSession } from '$lib/types';
 
   const rankOptions = Array.from({ length: DEPARTMENTS.length }, (_, index) => index + 1);
+  const PASSWORD_SETUP_INDEX_KEY = 'field-selection-password-setup-index';
 
   let session = $state<StudentSession | null>(null);
   let rankings = $state<StudentRankings>(emptyRankings());
@@ -33,8 +33,7 @@
   let saving = $state(false);
   let errorMessage = $state('');
   let showAuthentication = $state(false);
-  let authMode = $state<'notice' | 'otp' | 'password'>('notice');
-  let otp = $state('');
+  let authMode = $state<'notice' | 'magic-link-sent' | 'password'>('notice');
   let personalPassword = $state('');
   let passwordConfirmation = $state('');
   let authMessage = $state('');
@@ -49,6 +48,13 @@
     if (!session) {
       await goto('/login', { replaceState: true });
       return;
+    }
+    if (
+      localStorage.getItem(PASSWORD_SETUP_INDEX_KEY) === session.indexNumber
+      && await hasEditableSession(session.indexNumber, studentRepository.findStudentEmail)
+    ) {
+      showAuthentication = true;
+      authMode = 'password';
     }
     try {
       const [saved, results] = await Promise.all([
@@ -103,41 +109,24 @@
     authMessage = '';
     personalPassword = '';
     passwordConfirmation = '';
-    otp = '';
   }
 
-  async function sendOtp() {
+  async function sendMagicLink() {
     if (!session) return;
     authenticating = true;
     authMessage = '';
-    const result = await sendPreferenceOtp(session.indexNumber, studentRepository.findStudentEmail);
-    authenticating = false;
-    if (!result.ok) {
-      authMessage = result.message;
-      return;
-    }
-    authMode = 'otp';
-  }
-
-  async function verifyOtp() {
-    if (!/^[0-9]{6}$/.test(otp)) {
-      authMessage = 'Enter the six-digit code from your email.';
-      return;
-    }
-    if (!session) return;
-    authenticating = true;
-    authMessage = '';
-    const result = await verifyPreferenceOtp(
+    const result = await sendPreferenceMagicLink(
       session.indexNumber,
-      otp,
-      studentRepository.findStudentEmail
+      studentRepository.findStudentEmail,
+      `${window.location.origin}/preferences`
     );
     authenticating = false;
     if (!result.ok) {
       authMessage = result.message;
       return;
     }
-    authMode = 'password';
+    localStorage.setItem(PASSWORD_SETUP_INDEX_KEY, session.indexNumber);
+    authMode = 'magic-link-sent';
   }
 
   async function createPassword() {
@@ -152,7 +141,7 @@
     }
     authenticating = true;
     authMessage = '';
-    // The verified OTP already established the session. Update only the password here.
+    // The confirmed magic link already established the session. Update only the password here.
     const { supabase } = await import('$lib/supabase');
     const { error } = await supabase.auth.updateUser({ password: personalPassword });
     authenticating = false;
@@ -162,6 +151,7 @@
     }
     session = { ...session, accessMode: 'editable' };
     saveStudentSession(session);
+    localStorage.removeItem(PASSWORD_SETUP_INDEX_KEY);
     showAuthentication = false;
     await savePreferences();
   }
@@ -250,18 +240,13 @@
           <button class="button auth-action" type="button" onclick={logout}>
             Log out and sign in
           </button>
-          <button class="button secondary auth-action" type="button" onclick={sendOtp} disabled={authenticating}>
-            {authenticating ? 'Sending code…' : 'Don’t have a personal password or forgot it?'}
+          <button class="button secondary auth-action" type="button" onclick={sendMagicLink} disabled={authenticating}>
+            {authenticating ? 'Sending confirmation email…' : 'Don’t have a personal password or forgot it?'}
           </button>
-        {:else if authMode === 'otp'}
-          <p class="muted">A one-time code was sent to the email address registered for this index number.</p>
-          <div class="field">
-            <label for="otp">Six-digit verification code</label>
-            <input class="input" id="otp" bind:value={otp} inputmode="numeric" autocomplete="one-time-code" maxlength="6" />
-          </div>
-          <button class="button auth-action" type="button" onclick={verifyOtp} disabled={authenticating}>
-            {authenticating ? 'Verifying…' : 'Verify code'}
-          </button>
+        {:else if authMode === 'magic-link-sent'}
+          <p class="muted">
+            Supabase has sent a confirmation email to your registered email address. Open the confirmation link in that email to continue.
+          </p>
         {:else if authMode === 'password'}
           <p class="muted">Your email has been verified. Create a new personal password for future preference changes.</p>
           <div class="field">

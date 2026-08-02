@@ -33,35 +33,22 @@ export async function signInWithPersonalPassword(
   }
 }
 
-export async function sendPreferenceOtp(
+export async function sendPreferenceMagicLink(
   indexNumber: string,
   lookup: EmailLookup,
+  emailRedirectTo: string,
   client: SupabaseClient = supabase
 ): Promise<StudentEditAuthResult> {
   try {
     const email = await emailForIndex(indexNumber, lookup);
-    const { error } = await client.auth.signInWithOtp({ email });
-    if (error) return { ok: false, message: 'Unable to send the verification code. Please try again.' };
+    const { error } = await client.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo }
+    });
+    if (error) return { ok: false, message: 'Unable to send the confirmation email. Please try again.' };
     return { ok: true };
   } catch {
-    return { ok: false, message: 'Unable to send the verification code. Please try again.' };
-  }
-}
-
-export async function verifyPreferenceOtp(
-  indexNumber: string,
-  otp: string,
-  lookup: EmailLookup,
-  client: SupabaseClient = supabase
-): Promise<StudentEditAuthResult> {
-  try {
-    const email = await emailForIndex(indexNumber, lookup);
-    const { error: otpError } = await client.auth.verifyOtp({ email, token: otp, type: 'email' });
-    if (otpError) return { ok: false, message: 'That verification code is invalid or has expired.' };
-
-    return { ok: true };
-  } catch {
-    return { ok: false, message: 'Unable to verify the code. Please try again.' };
+    return { ok: false, message: 'Unable to send the confirmation email. Please try again.' };
   }
 }
 

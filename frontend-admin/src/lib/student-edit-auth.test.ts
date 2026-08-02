@@ -2,9 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, expect, it, vi } from 'vitest';
 import {
   hasEditableSession,
-  sendPreferenceOtp,
-  signInWithPersonalPassword,
-  verifyPreferenceOtp
+  sendPreferenceMagicLink,
+  signInWithPersonalPassword
 } from './student-edit-auth';
 
 function clientWith(auth: Record<string, unknown>): SupabaseClient {
@@ -41,26 +40,18 @@ describe('student preference editing authentication', () => {
     expect(result).toEqual({ ok: false, message: 'Invalid index number or personal password.' });
   });
 
-  it('sends an email OTP without displaying the email in its result', async () => {
+  it('sends a confirmation magic link without displaying the email in its result', async () => {
     const signInWithOtp = vi.fn().mockResolvedValue({ error: null });
-    const result = await sendPreferenceOtp('220001A', lookup, clientWith({ signInWithOtp }));
-    expect(result).toEqual({ ok: true });
-    expect(signInWithOtp).toHaveBeenCalledWith({ email: 'student@example.test' });
-  });
-
-  it('verifies the six-digit email OTP and establishes the Auth session before password creation', async () => {
-    const verifyOtp = vi.fn().mockResolvedValue({ error: null });
-    const result = await verifyPreferenceOtp(
+    const result = await sendPreferenceMagicLink(
       '220001A',
-      '123456',
       lookup,
-      clientWith({ verifyOtp })
+      'https://field-selection.example/preferences',
+      clientWith({ signInWithOtp })
     );
     expect(result).toEqual({ ok: true });
-    expect(verifyOtp).toHaveBeenCalledWith({
+    expect(signInWithOtp).toHaveBeenCalledWith({
       email: 'student@example.test',
-      token: '123456',
-      type: 'email'
+      options: { emailRedirectTo: 'https://field-selection.example/preferences' }
     });
   });
 
