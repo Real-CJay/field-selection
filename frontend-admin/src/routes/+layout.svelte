@@ -8,13 +8,14 @@
   // Stay closed by default in production. Local testing enables the app with
   // PUBLIC_MAINTENANCE_MODE=false in the ignored .env file.
   const maintenanceMode = env.PUBLIC_MAINTENANCE_MODE !== 'false';
-  let showLogin = $derived(page.url.pathname === '/login');
+  // The root route forwards to /login, so it must also render while maintenance is enabled.
+  let showEntryRoute = $derived(page.url.pathname === '/' || page.url.pathname === '/login');
   let hasPreviewAccess = $derived.by(() => {
     // Make this re-evaluate after route navigation, when login updates local storage.
     page.url.pathname;
     return isMaintenancePreviewStudent(getStudentSession()?.indexNumber);
   });
-  let showMaintenance = $derived(maintenanceMode && !showLogin && !hasPreviewAccess);
+  let showMaintenance = $derived(maintenanceMode && !showEntryRoute && !hasPreviewAccess);
 </script>
 
 <svelte:head>
