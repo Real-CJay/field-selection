@@ -12,6 +12,15 @@ export interface StudentAuthTokens {
   token_type: string;
 }
 
+export type StudentLoginResult =
+  | (StudentIdentity & {
+      access_mode: 'read-only';
+      read_token: string;
+    })
+  | (StudentIdentity & StudentAuthTokens & {
+      access_mode: 'editable';
+    });
+
 function baseUrl(): string {
   const value = env.PUBLIC_API_BASE_URL?.replace(/\/+$/, '');
   if (!value) throw new Error('PUBLIC_API_BASE_URL is not configured.');
@@ -59,6 +68,27 @@ export async function signInStudentWithPassword(
   });
   if (!response.ok) {
     throw new Error(await errorMessage(response, 'Invalid index number or personal password.'));
+  }
+  return await response.json();
+}
+
+export async function signInStudent(
+  indexNumber: string,
+  password: string,
+  turnstileToken: string,
+  fetcher: typeof fetch = fetch
+): Promise<StudentLoginResult> {
+  const response = await fetcher(`${baseUrl()}/api/student/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      index_number: indexNumber,
+      password,
+      turnstile_token: turnstileToken
+    })
+  });
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, 'Invalid index number or password.'));
   }
   return await response.json();
 }

@@ -1,0 +1,83 @@
+-- EMERGENCY INCIDENT LOCKDOWN
+-- Run this first in the Supabase SQL Editor. It intentionally breaks every
+-- browser-side database read/write until the full secure migration and new
+-- backend/frontend have been deployed.
+
+begin;
+
+do $$
+declare
+  table_record record;
+begin
+  for table_record in
+    select tablename from pg_tables where schemaname = 'public'
+  loop
+    execute format('alter table public.%I enable row level security', table_record.tablename);
+    execute format(
+      'revoke all privileges on table public.%I from public, anon, authenticated',
+      table_record.tablename
+    );
+  end loop;
+end;
+$$;
+
+do $$
+declare
+  sequence_record record;
+begin
+  for sequence_record in
+    select sequencename from pg_sequences where schemaname = 'public'
+  loop
+    execute format(
+      'revoke all privileges on sequence public.%I from public, anon, authenticated',
+      sequence_record.sequencename
+    );
+  end loop;
+end;
+$$;
+
+do $$
+declare
+  function_record record;
+begin
+  for function_record in
+    select p.oid::regprocedure as signature
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+  loop
+    execute format(
+      'revoke all privileges on function %s from public, anon, authenticated',
+      function_record.signature
+    );
+  end loop;
+end;
+$$;
+
+revoke create on schema public from public, anon, authenticated;
+
+alter default privileges for role postgres in schema public
+  revoke all privileges on tables from public, anon, authenticated;
+alter default privileges for role postgres in schema public
+  revoke all privileges on sequences from public, anon, authenticated;
+alter default privileges for role postgres in schema public
+  revoke all privileges on functions from public, anon, authenticated;
+
+commit;
+
+notify pgrst, 'reload schema';
+
+-- These verification queries must return no PUBLIC/anon/authenticated table grants,
+-- and every public table must report rls_enabled = true.
+select grantee, table_name, privilege_type
+from information_schema.role_table_grants
+where table_schema = 'public'
+  and grantee in ('PUBLIC', 'anon', 'authenticated')
+order by table_name, grantee, privilege_type;
+
+select c.relname as table_name, c.relrowsecurity as rls_enabled
+from pg_class c
+join pg_namespace n on n.oid = c.relnamespace
+where n.nspname = 'public'
+  and c.relkind in ('r', 'p')
+order by c.relname;

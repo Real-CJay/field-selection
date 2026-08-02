@@ -3,7 +3,7 @@
   import { onMount } from 'svelte';
   import { formatCutoff } from '$lib/allocation';
   import { getAdminDepartments, getAdminStudents, updateAdminGrades } from '$lib/admin-client';
-  import { clearAdminCredentials, getAdminCredentials } from '$lib/admin-session';
+  import { clearAdminSession, getAdminSession } from '$lib/admin-session';
   import { getCorrectionRequests, revertCorrectionRequest, reviewCorrectionRequest } from '$lib/correction-client';
   import { MODULE_GRADES } from '$lib/module-grades';
   import { DEPARTMENTS } from '$lib/preferences';
@@ -40,7 +40,7 @@
   );
 
   onMount(async () => {
-    if (!getAdminCredentials()) {
+    if (!getAdminSession()) {
       await goto('/login', { replaceState: true });
       return;
     }
@@ -48,14 +48,14 @@
   });
 
   async function refresh() {
-    const credentials = getAdminCredentials();
-    if (!credentials) return;
+    const adminSession = getAdminSession();
+    if (!adminSession) return;
     loading = true;
     try {
       [students, requests, departments] = await Promise.all([
-        getAdminStudents(credentials.username, credentials.password),
-        getCorrectionRequests(credentials.username, credentials.password),
-        getAdminDepartments(credentials.username, credentials.password)
+        getAdminStudents(adminSession.token),
+        getCorrectionRequests(adminSession.token),
+        getAdminDepartments(adminSession.token)
       ]);
       if (selectedDepartment && !departments.some(({ department }) => department === selectedDepartment)) {
         selectedDepartment = null;
@@ -79,12 +79,12 @@
         : student.grades[subject];
       return;
     }
-    const credentials = getAdminCredentials();
-    if (!credentials) return;
+    const adminSession = getAdminSession();
+    if (!adminSession) return;
     loading = true;
     try {
       await updateAdminGrades(
-        student.index_number, { [subject]: grade }, credentials.username, credentials.password
+        student.index_number, { [subject]: grade }, adminSession.token
       );
       await refresh();
       message = `${student.index_number} grade updated.`;
@@ -95,11 +95,11 @@
   }
 
   async function review(id: number, decision: 'approved' | 'rejected') {
-    const credentials = getAdminCredentials();
-    if (!credentials) return;
+    const adminSession = getAdminSession();
+    if (!adminSession) return;
     loading = true;
     try {
-      await reviewCorrectionRequest(id, decision, credentials.username, credentials.password);
+      await reviewCorrectionRequest(id, decision, adminSession.token);
       await refresh();
       message = `Request ${decision}.`;
     } catch (error) {
@@ -111,11 +111,11 @@
   async function bulkReview(decision: 'approved' | 'rejected') {
     const pendingIds = selectedRequests.filter((id) => requests.some((request) => request.id === id && request.status === 'pending'));
     if (!pendingIds.length || !confirm(`${decision === 'approved' ? 'Approve' : 'Reject'} ${pendingIds.length} selected requests?`)) return;
-    const credentials = getAdminCredentials();
-    if (!credentials) return;
+    const adminSession = getAdminSession();
+    if (!adminSession) return;
     loading = true;
     try {
-      await Promise.all(pendingIds.map((id) => reviewCorrectionRequest(id, decision, credentials.username, credentials.password)));
+      await Promise.all(pendingIds.map((id) => reviewCorrectionRequest(id, decision, adminSession.token)));
       selectedRequests = [];
       await refresh();
       message = `${pendingIds.length} requests ${decision}.`;
@@ -129,11 +129,11 @@
 
   async function revertCorrection(request: GradeCorrectionRequest) {
     if (!confirm(`Revert ${moduleNames[request.module]} for ${request.index_number} from ${request.requested_grade} back to ${request.current_grade}?`)) return;
-    const credentials = getAdminCredentials();
-    if (!credentials) return;
+    const adminSession = getAdminSession();
+    if (!adminSession) return;
     loading = true;
     try {
-      await revertCorrectionRequest(request.id, credentials.username, credentials.password);
+      await revertCorrectionRequest(request.id, adminSession.token);
       await refresh();
       message = 'The approved correction was reverted. Its history has been preserved.';
     } catch (error) {
@@ -147,12 +147,12 @@
     if (student.average_gpa === null || student.preferences.length === 0) return 'Incomplete';
     if (allocation.assigned_department) return `Assigned: ${departmentNames[allocation.assigned_department]}`;
     if (allocation.possible_departments.length) return `Possible: ${allocation.possible_departments.map((id) => departmentNames[id]).join(', ')}`;
-    if (allocation.guaranteed_department) return `Guaranteed: ${departmentNames[allocation.guaranteed_department]} or higher`;
+    if (allocation.guaranteed_department) return `Current estimate: ${departmentNames[allocation.guaranteed_department]} or higher`;
     return 'Unresolved';
   }
 
   function logout() {
-    clearAdminCredentials();
+    clearAdminSession();
     goto('/login');
   }
 

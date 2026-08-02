@@ -3,14 +3,23 @@ import { authenticateAdmin } from './admin-client';
 
 describe('admin authentication client', () => {
   it('sends the CJay credentials to the protected backend login endpoint', async () => {
-    const fetcher = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    const fetcher = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ username: 'CJay', admin_token: 'signed-token' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    ));
 
-    await authenticateAdmin('CJay', 'admin-password', fetcher);
+    await expect(authenticateAdmin('CJay', 'admin-password', 'turnstile-token', fetcher))
+      .resolves.toEqual({ username: 'CJay', admin_token: 'signed-token' });
 
     expect(fetcher).toHaveBeenCalledOnce();
     const [url, options] = fetcher.mock.calls[0];
     expect(String(url)).toMatch(/\/api\/admin\/login$/);
-    expect(options.headers.Authorization).toBe(`Basic ${btoa('CJay:admin-password')}`);
+    expect(JSON.parse(options.body)).toEqual({
+      username: 'CJay',
+      password: 'admin-password',
+      turnstile_token: 'turnstile-token'
+    });
+    expect(options.headers.Authorization).toBeUndefined();
   });
 
   it('returns the backend admin error without attempting student authentication', async () => {
@@ -19,7 +28,7 @@ describe('admin authentication client', () => {
       { status: 401, headers: { 'Content-Type': 'application/json' } }
     ));
 
-    await expect(authenticateAdmin('CJay', 'wrong-password', fetcher)).rejects.toThrow(
+    await expect(authenticateAdmin('CJay', 'wrong-password', 'turnstile-token', fetcher)).rejects.toThrow(
       'Invalid administrator credentials.'
     );
   });

@@ -1,18 +1,18 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  clearAdminCredentials,
-  getAdminCredentials,
-  setAdminCredentials
+  clearAdminSession,
+  getAdminSession,
+  setAdminSession
 } from './admin-session';
 
 describe('admin session', () => {
-  afterEach(clearAdminCredentials);
+  afterEach(clearAdminSession);
 
-  it('keeps credentials only in the current in-memory session', () => {
-    expect(getAdminCredentials()).toBeNull();
-    setAdminCredentials({ username: 'CJay', password: 'test-password' });
-    expect(getAdminCredentials()).toEqual({ username: 'CJay', password: 'test-password' });
-    clearAdminCredentials();
-    expect(getAdminCredentials()).toBeNull();
+  it('keeps only the signed token in the current in-memory session', () => {
+    expect(getAdminSession()).toBeNull();
+    setAdminSession({ username: 'CJay', token: 'signed-token' });
+    expect(getAdminSession()).toEqual({ username: 'CJay', token: 'signed-token' });
+    clearAdminSession();
+    expect(getAdminSession()).toBeNull();
   });
 });

@@ -4,7 +4,7 @@
     departmentsByDescendingCutoff,
     formatCutoff,
     formatGpa,
-    getConfidence,
+    getCoverageBand,
     getDepartmentName
   } from '$lib/allocation';
   import { getDepartmentGpas } from '$lib/department-client';
@@ -24,10 +24,11 @@
   } as const;
 
   let { result }: { result: AllocationResult } = $props();
-  let confidence = $derived(getConfidence(result.accuracy_percentage));
+  let coverageBand = $derived(getCoverageBand(result.coverage_percentage));
   let sortedDepartments = $derived(departmentsByDescendingCutoff(result.cutoffs));
   let selectedDepartment = $state<DepartmentId | null>(null);
   let departmentGroups = $state<DepartmentGpaGroup[]>([]);
+  let departmentMinimumGroupSize = $state(3);
   let departmentLoading = $state(false);
   let departmentError = $state('');
   let departmentIncomplete = $state(false);
@@ -60,7 +61,7 @@
     if (group.possible_departments.length) {
       const possible = departmentList(group.possible_departments);
       return group.guaranteed_department
-        ? `${possible} · guaranteed ${getDepartmentName(group.guaranteed_department)} or higher`
+        ? `${possible} · current estimate no lower than ${getDepartmentName(group.guaranteed_department)}`
         : possible;
     }
     return 'Placement currently unresolved';
@@ -103,6 +104,7 @@
       const response = await getDepartmentGpas(department);
       if (selectedDepartment !== department) return;
       departmentGroups = response.groups;
+      departmentMinimumGroupSize = response.minimumGroupSize;
       departmentIncomplete = response.incomplete;
     } catch (error) {
       if (selectedDepartment !== department) return;
@@ -160,6 +162,8 @@
         <p class="lookup-count"><strong>{lookupResult.count}</strong> of {lookupResult.total_students_processed} eligible students have a field-selection GPA of <strong>{lookupResult.gpa.toFixed(2)}</strong>.</p>
         {#if lookupResult.count === 0}
           <p>No matching allocation outcomes are available.</p>
+        {:else if lookupResult.details_suppressed}
+          <p>Detailed outcomes are hidden because fewer than {lookupResult.minimum_group_size} students share this GPA. This protects student privacy.</p>
         {:else}
           <div class="lookup-groups">
             {#each lookupResult.allocation_groups as group}
@@ -197,18 +201,18 @@
       <strong>#{result.student_rank}</strong>
     </div>
     <div class="metric">
-      <span>Accuracy</span>
-      <strong>{result.accuracy_percentage.toFixed(1)}%</strong>
+      <span>Cohort coverage</span>
+      <strong>{result.coverage_percentage.toFixed(1)}%</strong>
       <small class="submission-count"
         >{result.total_students_processed} / 743 students submitted</small
       >
     </div>
     <div class="metric">
-      <span>Confidence</span>
-      <strong class={`confidence ${confidence.level}`}>{confidence.label}</strong>
+      <span>Coverage band</span>
+      <strong class={`confidence ${coverageBand.level}`}>{coverageBand.label}</strong>
       <details class="confidence-help">
-        <summary>What is confidence?</summary>
-        <p>Confidence is based on the percentage of the 743-student cohort that has submitted.</p>
+        <summary>What is cohort coverage?</summary>
+        <p>This is only the percentage of the 743-student cohort currently included. It is not a measurement of prediction accuracy, and allocations can still change.</p>
         <ul>
           <li><strong>0–&lt;60%:</strong> Very Low</li>
           <li><strong>60–&lt;70%:</strong> Low</li>
@@ -232,11 +236,11 @@
       {/if}
       {#if result.guaranteed_department}
         <p>
-          You are guaranteed {getDepartmentName(result.guaranteed_department)} or a higher-ranked
-          preference.
+          Based only on current submissions, your estimate is no lower than
+          {getDepartmentName(result.guaranteed_department)} or a higher-ranked preference.
         </p>
       {:else}
-        <p>Subject marks are needed before a department can be guaranteed.</p>
+        <p>Current submissions are not sufficient to give a lower-bound estimate.</p>
       {/if}
       {#if result.allocation_explanation}<p>{result.allocation_explanation}</p>{/if}
     </aside>
@@ -292,14 +296,15 @@
                     <h4>Anonymous two-decimal GPAs in {department.name}</h4>
                     <p class="distribution-note">
                       Student index numbers are never shown. A count range means unresolved ties
-                      can change how many students with that GPA enter this department.
+                      can change how many students with that GPA enter this department. Groups
+                      smaller than {departmentMinimumGroupSize} are hidden for privacy.
                     </p>
                     {#if departmentLoading}
                       <p>Loading GPA distribution…</p>
                     {:else if departmentError}
                       <p class="distribution-error" role="alert">{departmentError}</p>
                     {:else if departmentGroups.length === 0}
-                      <p>No currently allocated students are available for this department.</p>
+                      <p>No privacy-safe GPA groups are currently available for this department.</p>
                     {:else}
                       <div class="gpa-groups">
                         {#each departmentGroups as group}

@@ -10,14 +10,14 @@ export const ALLOCATION_LOADING_TITLE = 'Waking up the server and calculating es
 export const ALLOCATION_LOADING_DESCRIPTION =
   'The first request can take 50–60 seconds while the server starts. Please keep this page open.';
 export const ALLOCATION_DISCLAIMER =
-  'These cut-offs and placements are live estimates based on current student submissions. These are NOT final university results and your placement will fluctuate as more students enter their data. Please encourage other students to complete the module grades and field preference form so these estimates become more reliable.';
+  'These cut-offs and placements are estimates based only on current submissions. Cohort coverage is not prediction accuracy. These are NOT final university results, and no estimated placement should be treated as an official decision. Confirm the final allocation through the university and use the correction process if your recorded data is wrong.';
 
 export type AllocationErrorKind = 'not-found' | 'http' | 'network' | 'invalid-response';
 export type AllocationErrorState = 'not-found' | 'error';
-export type ConfidenceLevel = 'very-low' | 'low' | 'medium' | 'average' | 'high' | 'very-high';
+export type CoverageLevel = 'very-low' | 'low' | 'medium' | 'average' | 'high' | 'very-high';
 
-export interface Confidence {
-  level: ConfidenceLevel;
+export interface CoverageBand {
+  level: CoverageLevel;
   label: 'Very Low' | 'Low' | 'Medium' | 'Average' | 'High' | 'Very High';
 }
 
@@ -147,12 +147,12 @@ export function parseAllocationResult(value: unknown): AllocationResult {
     throw new AllocationRequestError('invalid-response', 'Processed student count is invalid.');
   }
   if (
-    typeof value.accuracy_percentage !== 'number' ||
-    !Number.isFinite(value.accuracy_percentage) ||
-    value.accuracy_percentage < 0 ||
-    value.accuracy_percentage > 100
+    typeof value.coverage_percentage !== 'number' ||
+    !Number.isFinite(value.coverage_percentage) ||
+    value.coverage_percentage < 0 ||
+    value.coverage_percentage > 100
   ) {
-    throw new AllocationRequestError('invalid-response', 'Accuracy percentage is invalid.');
+    throw new AllocationRequestError('invalid-response', 'Cohort coverage percentage is invalid.');
   }
 
   return {
@@ -170,7 +170,7 @@ export function parseAllocationResult(value: unknown): AllocationResult {
     allocation_explanation: value.allocation_explanation,
     cutoffs: readCutoffs(value.cutoffs),
     total_students_processed: value.total_students_processed as number,
-    accuracy_percentage: value.accuracy_percentage
+    coverage_percentage: value.coverage_percentage
   };
 }
 
@@ -250,12 +250,12 @@ export function formatGpa(gpa: number): string {
   return gpa.toFixed(4);
 }
 
-export function getConfidence(accuracyPercentage: number): Confidence {
-  if (accuracyPercentage < 60) return { level: 'very-low', label: 'Very Low' };
-  if (accuracyPercentage < 70) return { level: 'low', label: 'Low' };
-  if (accuracyPercentage < 80) return { level: 'medium', label: 'Medium' };
-  if (accuracyPercentage < 90) return { level: 'average', label: 'Average' };
-  if (accuracyPercentage < 95) return { level: 'high', label: 'High' };
+export function getCoverageBand(coveragePercentage: number): CoverageBand {
+  if (coveragePercentage < 60) return { level: 'very-low', label: 'Very Low' };
+  if (coveragePercentage < 70) return { level: 'low', label: 'Low' };
+  if (coveragePercentage < 80) return { level: 'medium', label: 'Medium' };
+  if (coveragePercentage < 90) return { level: 'average', label: 'Average' };
+  if (coveragePercentage < 95) return { level: 'high', label: 'High' };
   return { level: 'very-high', label: 'Very High' };
 }
 

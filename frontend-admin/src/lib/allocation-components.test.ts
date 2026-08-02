@@ -37,11 +37,11 @@ const result: AllocationResult = {
     mechatronics: { ...seat(10, 10), status: 'fixed', value: 3.6, incomplete: false }
   },
   total_students_processed: 45,
-  accuracy_percentage: 6.1
+  coverage_percentage: 6.1
 };
 
 describe('allocation components', () => {
-  it('renders identity, department, four-decimal GPA, rank, accuracy, confidence, and disclaimer', () => {
+  it('renders identity, department, four-decimal GPA, rank, coverage, and disclaimer', () => {
     const { body } = render(AllocationResults, { props: { result } });
 
     expect(body).toContain('Test Student');
@@ -53,9 +53,8 @@ describe('allocation components', () => {
     expect(body).toContain('Very Low');
     expect(body).toContain('Open');
     expect(body).toContain('These are NOT final university results');
-    expect(body).toContain('encourage other students');
     expect(body.indexOf('Important:')).toBeLessThan(body.indexOf('Current estimated cut-offs'));
-    expect(body).toContain('What is confidence?');
+    expect(body).toContain('What is cohort coverage?');
     expect(body).toContain('0–&lt;60%:');
     expect(body).toContain('90–&lt;95%:');
     expect(body).toContain('95–100%:');
@@ -77,7 +76,7 @@ describe('allocation components', () => {
     const { body } = render(AllocationResults, { props: { result: borderResult } });
     expect(body).toContain('Placement is on a border');
     expect(body).toContain('Computer Science and Engineering, Electrical Engineering');
-    expect(body).toContain('guaranteed Mechanical Engineering or a higher-ranked');
+    expect(body).toContain('estimate is no lower than');
   });
 
   it('renders the Render cold-start loading state', () => {

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import { getAuthenticatedStudent, type StudentIdentity } from './student-auth-client';
+import { clearStudentReadToken } from './student-api-session';
 
 type IdentityLookup = (accessToken: string) => Promise<StudentIdentity>;
 
@@ -26,5 +27,6 @@ export async function hasEditableSession(
 }
 
 export async function signOutStudentAuth(client: SupabaseClient = supabase): Promise<void> {
+  clearStudentReadToken();
   await client.auth.signOut();
 }
