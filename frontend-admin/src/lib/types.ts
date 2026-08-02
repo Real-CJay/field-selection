@@ -1,7 +1,6 @@
 export interface Student {
   index_number: string;
   name: string;
-  email: string;
 }
 
 export interface StudentSession {

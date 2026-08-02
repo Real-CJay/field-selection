@@ -6,7 +6,7 @@ import type { StudentPreferences } from './types';
 describe('student repository', () => {
   it('looks up one student by index number', async () => {
     const maybeSingle = vi.fn().mockResolvedValue({
-      data: { index_number: '220001A', name: 'Test Student', email: 'test@example.test' },
+      data: { index_number: '220001A', name: 'Test Student' },
       error: null
     });
     const eq = vi.fn().mockReturnValue({ maybeSingle });
@@ -18,6 +18,7 @@ describe('student repository', () => {
       index_number: '220001A'
     });
     expect(from).toHaveBeenCalledWith('students');
+    expect(select).toHaveBeenCalledWith('index_number, name');
     expect(eq).toHaveBeenCalledWith('index_number', '220001A');
   });
 

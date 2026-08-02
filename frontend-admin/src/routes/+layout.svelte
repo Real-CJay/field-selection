@@ -9,7 +9,12 @@
   // PUBLIC_MAINTENANCE_MODE=false in the ignored .env file.
   const maintenanceMode = env.PUBLIC_MAINTENANCE_MODE !== 'false';
   // The root route forwards to /login, so it must also render while maintenance is enabled.
-  let showEntryRoute = $derived(page.url.pathname === '/' || page.url.pathname === '/login');
+  let showEntryRoute = $derived(
+    page.url.pathname === '/'
+      || page.url.pathname === '/login'
+      || page.url.pathname === '/auth/callback'
+      || page.url.pathname === '/admin'
+  );
   let hasPreviewAccess = $derived.by(() => {
     // Make this re-evaluate after route navigation, when login updates local storage.
     page.url.pathname;

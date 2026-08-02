@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from fastapi.security import HTTPBasicCredentials
 
 from api_server import (
+    BASE_QUOTAS,
     aggregate_admin_departments,
     aggregate_cutoffs,
     aggregate_department_gpas,
@@ -219,13 +220,33 @@ def test_cutoffs_and_anonymous_department_groups_use_two_decimal_gpa():
     states, processed, overflow = allocate_students(
         students, {"computer": 1, "civil": 1}
     )
-    assert aggregate_cutoffs(states, overflow) == {
-        "computer": {"status": "fixed", "value": 3.83, "incomplete": False, "selected_min": 1, "selected_max": 1, "quota": 200},
-        "civil": {"status": "fixed", "value": 3.82, "incomplete": False, "selected_min": 1, "selected_max": 1, "quota": 125},
+    assert aggregate_cutoffs(states, overflow, {"computer": 1, "civil": 1}) == {
+        "computer": {"status": "fixed", "value": 3.83, "incomplete": False, "selected_min": 1, "selected_max": 1, "quota": 1},
+        "civil": {"status": "fixed", "value": 3.82, "incomplete": False, "selected_min": 1, "selected_max": 1, "quota": 1},
     }
     assert aggregate_department_gpas("computer", states, processed, overflow) == [
         {"gpa": 3.83, "min_count": 1, "max_count": 1}
     ]
+
+
+def test_production_civil_quota_is_125():
+    assert BASE_QUOTAS["civil"] == 125
+    assert sum(BASE_QUOTAS.values()) == 753
+
+
+def test_unfilled_department_has_an_open_cutoff_even_when_a_zero_gpa_student_is_assigned():
+    students = [student("A", "0.0000", ["electronic"])]
+    states, _, overflow = allocate_students(students, {"electronic": 2})
+
+    assert aggregate_cutoffs(states, overflow, {"electronic": 2}) == {
+        "electronic": {
+            "status": "open",
+            "incomplete": False,
+            "selected_min": 1,
+            "selected_max": 1,
+            "quota": 2,
+        }
+    }
 
 
 def test_admin_department_view_lists_selected_students_and_boundary_tiebreakers():

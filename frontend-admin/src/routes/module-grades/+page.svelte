@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
+  import StudentWriteAuthModal from '$lib/components/StudentWriteAuthModal.svelte';
   import {
     GRADE_TO_GPA,
     MODULE_GRADES,
@@ -15,13 +16,14 @@
   } from '$lib/session';
   import type { ModuleGrade, StudentSession } from '$lib/types';
   import { studentRepository } from '$lib/student-repository';
-  import { signOutStudentAuth } from '$lib/student-edit-auth';
+  import { hasEditableSession, signOutStudentAuth } from '$lib/student-edit-auth';
 
   let session = $state<StudentSession | null>(null);
   let fluidMechanics = $state<ModuleGrade | ''>('');
   let mechanics = $state<ModuleGrade | ''>('');
   let message = $state('');
   let saving = $state(false);
+  let showAuthentication = $state(false);
 
   onMount(async () => {
     session = getStudentSession();
@@ -47,16 +49,9 @@
     }
   });
 
-  async function submit(event: SubmitEvent) {
-    event.preventDefault();
+  async function saveGrades() {
     if (!session) return;
-    message = '';
-
-    if (!isModuleGrade(fluidMechanics) || !isModuleGrade(mechanics)) {
-      message = 'Select both your Fluid Mechanics and Mechanics grades.';
-      return;
-    }
-
+    if (!isModuleGrade(fluidMechanics) || !isModuleGrade(mechanics)) return;
     saving = true;
     try {
       await studentRepository.saveGrades(
@@ -71,6 +66,27 @@
     } finally {
       saving = false;
     }
+  }
+
+  async function submit(event: SubmitEvent) {
+    event.preventDefault();
+    if (!session) return;
+    message = '';
+
+    if (!isModuleGrade(fluidMechanics) || !isModuleGrade(mechanics)) {
+      message = 'Select both your Fluid Mechanics and Mechanics grades.';
+      return;
+    }
+    if (!await hasEditableSession(session.indexNumber)) {
+      showAuthentication = true;
+      return;
+    }
+    await saveGrades();
+  }
+
+  async function authenticatedAndSave() {
+    showAuthentication = false;
+    await saveGrades();
   }
 
   async function logout() {
@@ -135,6 +151,16 @@
       Your grades are saved securely with your student results.
     </p>
   </section>
+
+  {#if session}
+    <StudentWriteAuthModal
+      open={showAuthentication}
+      indexNumber={session.indexNumber}
+      onAuthenticated={authenticatedAndSave}
+      onCancel={() => { showAuthentication = false; }}
+      onLogout={logout}
+    />
+  {/if}
 </main>
 
 <style>

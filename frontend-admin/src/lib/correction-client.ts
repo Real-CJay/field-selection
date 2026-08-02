@@ -17,15 +17,18 @@ async function readError(response: Response): Promise<string> {
 }
 
 export async function submitGradeCorrection(
-  indexNumber: string,
   module: CorrectableModule,
   requestedGrade: ModuleGrade,
+  accessToken: string,
   fetcher: typeof fetch = fetch
 ): Promise<void> {
   const response = await fetcher(`${apiBaseUrl()}/api/correction-requests`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ index_number: indexNumber, module, requested_grade: requestedGrade })
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ module, requested_grade: requestedGrade })
   });
   if (!response.ok) throw new Error(await readError(response));
 }

@@ -1,68 +1,25 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from './supabase';
+import { getAuthenticatedStudent, type StudentIdentity } from './student-auth-client';
 
-type EmailLookup = (indexNumber: string) => Promise<string | null>;
-
-export type StudentEditAuthResult =
-  | { ok: true }
-  | { ok: false; message: string };
-
-function normalizeIndexNumber(indexNumber: string): string {
-  return indexNumber.trim().toUpperCase();
-}
-
-async function emailForIndex(indexNumber: string, lookup: EmailLookup): Promise<string> {
-  const email = await lookup(normalizeIndexNumber(indexNumber));
-  if (!email) throw new Error('Index number not found in the student registry.');
-  return email;
-}
-
-export async function signInWithPersonalPassword(
-  indexNumber: string,
-  password: string,
-  lookup: EmailLookup,
-  client: SupabaseClient = supabase
-): Promise<StudentEditAuthResult> {
-  try {
-    const email = await emailForIndex(indexNumber, lookup);
-    const { error } = await client.auth.signInWithPassword({ email, password });
-    if (error) return { ok: false, message: 'Invalid index number or personal password.' };
-    return { ok: true };
-  } catch {
-    return { ok: false, message: 'Unable to sign in. Please try again.' };
-  }
-}
-
-export async function sendPreferenceMagicLink(
-  indexNumber: string,
-  lookup: EmailLookup,
-  emailRedirectTo: string,
-  client: SupabaseClient = supabase
-): Promise<StudentEditAuthResult> {
-  try {
-    const email = await emailForIndex(indexNumber, lookup);
-    const { error } = await client.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo }
-    });
-    if (error) return { ok: false, message: 'Unable to send the confirmation email. Please try again.' };
-    return { ok: true };
-  } catch {
-    return { ok: false, message: 'Unable to send the confirmation email. Please try again.' };
-  }
-}
+type IdentityLookup = (accessToken: string) => Promise<StudentIdentity>;
 
 export async function hasEditableSession(
   indexNumber: string,
-  lookup: EmailLookup,
-  client: SupabaseClient = supabase
+  client: SupabaseClient = supabase,
+  identityLookup: IdentityLookup = getAuthenticatedStudent
 ): Promise<boolean> {
   try {
-    const [email, userResponse] = await Promise.all([
-      emailForIndex(indexNumber, lookup),
-      client.auth.getUser()
+    const sessionResponse = await client.auth.getSession();
+    const accessToken = sessionResponse.data.session?.access_token;
+    if (sessionResponse.error || !accessToken) return false;
+    const [userResponse, identity] = await Promise.all([
+      client.auth.getUser(accessToken),
+      identityLookup(accessToken)
     ]);
-    return !userResponse.error && userResponse.data.user?.email?.toLowerCase() === email.toLowerCase();
+    return !userResponse.error
+      && Boolean(userResponse.data.user)
+      && identity.index_number.trim().toUpperCase() === indexNumber.trim().toUpperCase();
   } catch {
     return false;
   }

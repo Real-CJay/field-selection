@@ -7,7 +7,7 @@ export function createStudentRepository(client: SupabaseClient) {
     async findStudent(indexNumber: string): Promise<Student | null> {
       const { data, error } = await client
         .from('students')
-        .select('index_number, name, email')
+        .select('index_number, name')
         .eq('index_number', indexNumber)
         .maybeSingle();
 
@@ -26,17 +26,6 @@ export function createStudentRepository(client: SupabaseClient) {
 
       if (error) throw error;
       return data as StudentPreferences | null;
-    },
-
-    async findStudentEmail(indexNumber: string): Promise<string | null> {
-      const { data, error } = await client
-        .from('students')
-        .select('email')
-        .eq('index_number', indexNumber)
-        .maybeSingle();
-
-      if (error) throw error;
-      return typeof data?.email === 'string' ? data.email : null;
     },
 
     async getResults(indexNumber: string): Promise<StudentResults | null> {

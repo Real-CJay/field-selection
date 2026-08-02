@@ -4,8 +4,7 @@ import type { Student } from './types';
 
 const student: Student = {
   index_number: '220001A',
-  name: 'Test Student',
-  email: 'test@example.test'
+  name: 'Test Student'
 };
 
 describe('student login', () => {

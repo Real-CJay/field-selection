@@ -1,8 +1,12 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import Turnstile from '$lib/components/Turnstile.svelte';
+  import { authenticateAdmin } from '$lib/admin-client';
+  import { setAdminCredentials } from '$lib/admin-session';
   import { getReturningStudentRoute } from '$lib/navigation';
   import { authenticateStudent } from '$lib/student-auth';
-  import { signInWithPersonalPassword, signOutStudentAuth } from '$lib/student-edit-auth';
+  import { signOutStudentAuth } from '$lib/student-edit-auth';
+  import { getAuthenticatedStudent, signInStudentWithPassword } from '$lib/student-auth-client';
   import { STUDENT_PASSWORD } from '$lib/credentials';
   import { isMaintenancePreviewStudent } from '$lib/maintenance-access';
   import {
@@ -10,11 +14,15 @@
     saveStudentSession
   } from '$lib/session';
   import { studentRepository } from '$lib/student-repository';
+  import { supabase } from '$lib/supabase';
 
   let indexNumber = $state('');
   let password = $state('');
   let loading = $state(false);
   let message = $state('');
+  let turnstileToken = $state('');
+  let turnstileVersion = $state(0);
+  let isAdminUsername = $derived(indexNumber.trim().toLowerCase() === 'cjay');
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
@@ -22,6 +30,22 @@
     message = '';
 
     const normalizedIndex = indexNumber.trim().toUpperCase();
+    if (isAdminUsername) {
+      try {
+        const adminUsername = 'CJay';
+        await authenticateAdmin(adminUsername, password);
+        clearStudentSession();
+        await signOutStudentAuth();
+        setAdminCredentials({ username: adminUsername, password });
+        await goto('/admin');
+      } catch (error) {
+        message = error instanceof Error ? error.message : 'Invalid administrator credentials.';
+      } finally {
+        loading = false;
+      }
+      return;
+    }
+
     if (!isMaintenancePreviewStudent(normalizedIndex)) {
       clearStudentSession();
       await signOutStudentAuth();
@@ -30,32 +54,36 @@
     }
 
     if (password !== STUDENT_PASSWORD) {
-      const auth = await signInWithPersonalPassword(
-        indexNumber,
-        password,
-        studentRepository.findStudentEmail
-      );
-      if (!auth.ok) {
-        message = auth.message;
+      if (!turnstileToken) {
+        message = 'Complete the security check first.';
         loading = false;
         return;
       }
-
-      const student = await studentRepository.findStudent(indexNumber.trim().toUpperCase());
-      if (!student) {
-        message = 'Unable to load the student record. Please try again.';
-        loading = false;
-        return;
-      }
-      saveStudentSession({
-        indexNumber: student.index_number,
-        name: student.name,
-        accessMode: 'editable'
-      });
       try {
-        await goto(await getReturningStudentRoute(student.index_number, studentRepository.getResults, studentRepository.getPreferences));
-      } catch {
-        await goto('/preferences');
+        const tokens = await signInStudentWithPassword(normalizedIndex, password, turnstileToken);
+        const { error } = await supabase.auth.setSession({
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token
+        });
+        if (error) throw error;
+        const student = await getAuthenticatedStudent(tokens.access_token);
+        if (student.index_number !== normalizedIndex) throw new Error('Student identity mismatch.');
+        saveStudentSession({
+          indexNumber: student.index_number,
+          name: student.name,
+          accessMode: 'editable'
+        });
+        try {
+          await goto(await getReturningStudentRoute(student.index_number, studentRepository.getResults, studentRepository.getPreferences));
+        } catch {
+          await goto('/preferences');
+        }
+      } catch (error) {
+        await signOutStudentAuth();
+        message = error instanceof Error ? error.message : 'Unable to sign in. Please try again.';
+        turnstileToken = '';
+        turnstileVersion += 1;
+        loading = false;
       }
       return;
     }
@@ -120,6 +148,12 @@
 
       {#if message}
         <div class="message" role="alert">{message}</div>
+      {/if}
+
+      {#if password && password !== STUDENT_PASSWORD && !isAdminUsername}
+        {#key turnstileVersion}
+          <Turnstile onToken={(token) => { turnstileToken = token; }} />
+        {/key}
       {/if}
 
       <button class="button submit" type="submit" disabled={loading}>
