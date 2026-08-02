@@ -1,10 +1,20 @@
 <script lang="ts">
   import { env } from '$env/dynamic/public';
+  import { page } from '$app/state';
+  import { isMaintenancePreviewStudent } from '$lib/maintenance-access';
+  import { getStudentSession } from '$lib/session';
   import '../app.css';
   let { children } = $props();
   // Stay closed by default in production. Local testing enables the app with
   // PUBLIC_MAINTENANCE_MODE=false in the ignored .env file.
   const maintenanceMode = env.PUBLIC_MAINTENANCE_MODE !== 'false';
+  let showLogin = $derived(page.url.pathname === '/login');
+  let hasPreviewAccess = $derived.by(() => {
+    // Make this re-evaluate after route navigation, when login updates local storage.
+    page.url.pathname;
+    return isMaintenancePreviewStudent(getStudentSession()?.indexNumber);
+  });
+  let showMaintenance = $derived(maintenanceMode && !showLogin && !hasPreviewAccess);
 </script>
 
 <svelte:head>
@@ -12,7 +22,7 @@
   <meta name="description" content="Student field preference selection" />
 </svelte:head>
 
-{#if maintenanceMode}
+{#if showMaintenance}
   <main class="maintenance" aria-labelledby="maintenance-heading">
     <section class="maintenance-card">
       <p class="eyebrow">Field Selection</p>

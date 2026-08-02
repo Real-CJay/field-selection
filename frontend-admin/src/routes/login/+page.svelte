@@ -1,11 +1,10 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { authenticateAdmin } from '$lib/admin-client';
-  import { setAdminCredentials } from '$lib/admin-session';
   import { getReturningStudentRoute } from '$lib/navigation';
   import { authenticateStudent } from '$lib/student-auth';
   import { signInWithPersonalPassword, signOutStudentAuth } from '$lib/student-edit-auth';
   import { STUDENT_PASSWORD } from '$lib/credentials';
+  import { isMaintenancePreviewStudent } from '$lib/maintenance-access';
   import {
     clearStudentSession,
     saveStudentSession
@@ -22,18 +21,11 @@
     loading = true;
     message = '';
 
-    if (indexNumber.trim().toLowerCase() === 'cjay') {
-      try {
-        const adminUsername = 'CJay';
-        await authenticateAdmin(adminUsername, password);
-        clearStudentSession();
-        setAdminCredentials({ username: adminUsername, password });
-        await goto('/admin');
-      } catch (error) {
-        message = error instanceof Error ? error.message : 'Invalid administrator credentials.';
-      } finally {
-        loading = false;
-      }
+    const normalizedIndex = indexNumber.trim().toUpperCase();
+    if (!isMaintenancePreviewStudent(normalizedIndex)) {
+      clearStudentSession();
+      await signOutStudentAuth();
+      await goto('/', { replaceState: true });
       return;
     }
 
