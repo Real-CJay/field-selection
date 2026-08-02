@@ -1,7 +1,10 @@
 <script lang="ts">
+  import { env } from '$env/dynamic/public';
   import '../app.css';
   let { children } = $props();
-  const maintenanceMode = true;
+  // Stay closed by default in production. Local testing enables the app with
+  // PUBLIC_MAINTENANCE_MODE=false in the ignored .env file.
+  const maintenanceMode = env.PUBLIC_MAINTENANCE_MODE !== 'false';
 </script>
 
 <svelte:head>
