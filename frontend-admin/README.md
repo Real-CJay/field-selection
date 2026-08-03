@@ -15,19 +15,21 @@ Configure a local `.env`:
 PUBLIC_API_BASE_URL=http://localhost:8000
 ```
 
-Students sign in with an index number that exists in the `students` table and the shared password
-`student123`. Every student session is read-only. Preference, grade, and correction changes display a
-temporary unavailable message and do not write data.
+Students sign in with an index number and either `student123` for read-only access or their personal
+password for editable access. First-time password creation and forgotten-password resets use the
+permanent 16-digit recovery code distributed by the administrator. No email or Supabase browser Auth
+is used.
 
 ## Student flow
 
-- `/login` — student index and password
-- `/module-grades` — view or enter Fluid Mechanics and Mechanics grades; saving is temporarily disabled
+- `/login` — student index and shared or personal password
+- `/module-grades` — view or edit Fluid Mechanics and Mechanics grades
 - `/preferences` — rank all ten departments from 1 to 10
-- `/results` — module grades, four-decimal GPA, rank, estimated allocation, confidence, and cutoffs
+- `/results` — module grades, GPA, rank, estimated allocation, confidence, cutoffs, and corrections
 - `/fluid-mechanics` — compatibility redirect to `/module-grades`
 
-Saving preferences redirects to `/results`. The allocation request may take 50–60 seconds while a sleeping Render backend starts.
+When backend `STUDENT_WRITES_ENABLED=false`, every student write keeps the temporary unavailable
+message. Recovery and personal-password authentication remain available for controlled testing.
 
 ## Verify
 

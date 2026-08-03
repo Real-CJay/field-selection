@@ -18,6 +18,10 @@ For the four-decimal database column, run `Back_end_table_codes/migrate_average_
 
 See `frontend-admin/README.md`.
 
-## Read-only student portal
+## Student authentication
 
-Students use their index number and the shared `student123` password. Preference changes, Fluid/Mechanics grade changes, and grade-correction requests are temporarily disabled. See [READ_ONLY_DEPLOYMENT.md](READ_ONLY_DEPLOYMENT.md) for the required database, Render, and Vercel configuration.
+Students use their index number with `student123` for read-only access. A separately distributed,
+permanent 16-digit recovery code creates or resets a personal password; personal-password sessions
+can write preferences, Fluid/Mechanics grades, and grade-correction requests when the rollout flag is
+enabled. The browser never connects to Supabase directly. See
+[RECOVERY_CODE_DEPLOYMENT.md](RECOVERY_CODE_DEPLOYMENT.md) for the secure rollout procedure.

@@ -6,15 +6,17 @@
   import AllocationLoading from '$lib/components/AllocationLoading.svelte';
   import AllocationResults from '$lib/components/AllocationResults.svelte';
   import AllocationStatus from '$lib/components/AllocationStatus.svelte';
+  import StudentCredentialModal from '$lib/components/StudentCredentialModal.svelte';
   import { MODULE_GRADES, getGradeFromGpa, hasSubmittedModuleGrades } from '$lib/module-grades';
   import { getStudentResultsEntryRoute } from '$lib/navigation';
   import {
     clearStudentSession,
     getStudentSession
   } from '$lib/session';
-  import { clearStudentReadToken } from '$lib/student-api-session';
+  import { clearStudentApiSession, getStudentApiSession } from '$lib/student-api-session';
   import { studentRepository } from '$lib/student-repository';
   import { CORRECTION_REQUESTS_UNAVAILABLE } from '$lib/student-write-status';
+  import { getStudentWritesEnabled, isStudentWriteAuthError, submitStudentCorrection } from '$lib/student-write-client';
   import type {
     AllocationResult,
     StudentResults,
@@ -40,6 +42,8 @@
   let correctionModule = $state<CorrectableModule>('cse');
   let requestedGrade = $state<ModuleGrade | ''>('');
   let correctionMessage = $state('');
+  let authModalOpen = $state(false);
+  let correctionSending = $state(false);
 
   onMount(async () => {
     const activeSession = getStudentSession();
@@ -81,14 +85,53 @@
 
   async function logout() {
     clearStudentSession();
-    clearStudentReadToken();
+    clearStudentApiSession();
     await goto('/login');
   }
 
-  function requestCorrection(event: SubmitEvent) {
+  async function sendCurrentCorrection() {
+    if (!requestedGrade) return;
+    correctionSending = true;
+    correctionMessage = '';
+    try {
+      await submitStudentCorrection(correctionModule, requestedGrade);
+      correctionMessage = 'Your grade correction request was sent for admin review.';
+      requestedGrade = '';
+    } catch (error) {
+      if (isStudentWriteAuthError(error)) {
+        authModalOpen = true;
+        session = session ? { ...session, accessMode: 'read-only' } : session;
+        return;
+      }
+      correctionMessage = error instanceof Error ? error.message : 'Unable to send the request.';
+    } finally {
+      correctionSending = false;
+    }
+  }
+
+  async function requestCorrection(event: SubmitEvent) {
     event.preventDefault();
     if (!session || !requestedGrade) return;
-    correctionMessage = CORRECTION_REQUESTS_UNAVAILABLE;
+    if (getStudentApiSession()?.accessMode === 'editable') {
+      await sendCurrentCorrection();
+      return;
+    }
+    try {
+      if (!await getStudentWritesEnabled()) {
+        correctionMessage = CORRECTION_REQUESTS_UNAVAILABLE;
+        return;
+      }
+    } catch (error) {
+      correctionMessage = error instanceof Error ? error.message : 'Please log in again.';
+      return;
+    }
+    authModalOpen = true;
+  }
+
+  async function sendAfterAuthentication() {
+    authModalOpen = false;
+    session = getStudentSession();
+    await sendCurrentCorrection();
   }
 </script>
 
@@ -99,7 +142,7 @@
     <div>
       <h1>Your Results</h1>
       {#if session}
-        <p class="muted">{session.name} · {session.indexNumber}</p>
+        <p class="muted">{session.name} · {session.indexNumber} · <span class="access-badge">{session.accessMode === 'editable' ? 'Editable' : 'Read-only'}</span></p>
       {/if}
     </div>
     <div class="actions">
@@ -164,7 +207,7 @@
               {#each MODULE_GRADES as grade}<option value={grade}>{grade}</option>{/each}
             </select>
           </label>
-          <button class="button" type="submit">Send request</button>
+          <button class="button" type="submit" disabled={correctionSending}>{correctionSending ? 'Sending…' : 'Send request'}</button>
         </form>
         {#if correctionMessage}<p class="correction-message" role="status">{correctionMessage}</p>{/if}
       </section>
@@ -172,6 +215,15 @@
   </section>
 
 </main>
+
+{#if session}
+  <StudentCredentialModal
+    open={authModalOpen}
+    indexNumber={session.indexNumber}
+    onAuthenticated={sendAfterAuthentication}
+    onCancel={() => { authModalOpen = false; }}
+  />
+{/if}
 
 <style>
   .page-header {
@@ -252,6 +304,8 @@
     margin: 18px 0 0;
     color: #6b7280;
   }
+
+  .access-badge { font-weight: 700; color: #1d4ed8; }
 
   .allocation-section {
     margin-top: 20px;

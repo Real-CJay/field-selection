@@ -22,11 +22,18 @@ def configure_student_login(monkeypatch, student):
     monkeypatch.setenv(
         "STUDENT_READ_TOKEN_SECRET", "read-secret-that-is-at-least-32-characters"
     )
+    monkeypatch.setenv(
+        "STUDENT_EDIT_TOKEN_SECRET", "edit-secret-that-is-at-least-32-characters"
+    )
+    monkeypatch.setenv(
+        "STUDENT_CREDENTIAL_PEPPER", "pepper-secret-that-is-at-least-32-characters"
+    )
     monkeypatch.setattr(api_server, "get_supabase", lambda: object())
     monkeypatch.setattr(api_server, "reserve_auth_request", lambda *_: 1)
     monkeypatch.setattr(
         api_server, "find_student_auth_record_by_index", lambda *_: student
     )
+    monkeypatch.setattr(api_server, "find_student_credential", lambda *_: None)
     outcomes = []
     monkeypatch.setattr(
         api_server,
@@ -154,21 +161,233 @@ def test_admin_login_no_longer_requires_turnstile(monkeypatch):
     assert response["admin_token"].startswith("admin.")
 
 
-def test_removed_auth_routes_are_not_available_and_student_writes_are_disabled():
+def test_magic_link_is_removed_and_student_writes_default_to_disabled(monkeypatch):
     client = TestClient(api_server.app)
-    for path in (
-        "/api/student/auth/magic-link",
-        "/api/student/auth/password",
-        "/api/student/auth/me",
-    ):
-        assert client.post(path, json={}).status_code == 404
+    assert client.post("/api/student/auth/magic-link", json={}).status_code == 404
 
     correction = client.post(
         "/api/correction-requests",
         json={"module": "cse", "requested_grade": "A"},
     )
     assert correction.status_code == 503
-    assert correction.json()["detail"].startswith("Grade correction requests")
+    assert correction.json()["detail"].startswith("Student editing")
+
+
+def test_personal_password_login_returns_editable_versioned_token(monkeypatch):
+    configure_student_login(
+        monkeypatch, {"index_number": "250544U", "name": "Student"}
+    )
+    password_hash = api_server.hash_credential("my personal password")
+    monkeypatch.setattr(
+        api_server,
+        "find_student_credential",
+        lambda *_: {
+            "index_number": "250544U",
+            "recovery_code_hash": "unused",
+            "personal_password_hash": password_hash,
+            "password_version": 4,
+            "recovery_version": 1,
+        },
+    )
+
+    response = api_server.sign_in_student(
+        api_server.StudentLoginInput(
+            index_number="250544u", password="my personal password"
+        ),
+        request_from(),
+    )
+
+    assert response["access_mode"] == "editable"
+    assert response["edit_token"].startswith("edit.")
+    payload = api_server.verify_signed_token(response["edit_token"], "edit")
+    assert payload["sub"] == "250544U"
+    assert payload["ver"] == 4
+
+
+def test_recovery_codes_accept_grouping_and_reject_non_digits():
+    assert api_server.normalize_recovery_code("0123-4567-8901-2345") == "0123456789012345"
+    assert api_server.normalize_recovery_code("0123 4567 8901 2345") == "0123456789012345"
+    assert api_server.normalize_recovery_code("0123-4567-8901-234X") is None
+    assert api_server.normalize_recovery_code("123456") is None
+
+
+def test_password_rules_reject_shared_short_and_mismatched_passwords():
+    client = TestClient(api_server.app)
+    base = {"password_setup_token": "x" * 32}
+    cases = [
+        ({**base, "password": "short", "password_confirmation": "short"}, 422),
+        ({**base, "password": "student123", "password_confirmation": "student123"}, 422),
+        ({**base, "password": "allowed", "password_confirmation": "different"}, 422),
+    ]
+    for payload, expected_status in cases:
+        assert client.post("/api/student/auth/password", json=payload).status_code == expected_status
+
+
+def test_password_setup_consumes_challenge_and_returns_editable_token(monkeypatch):
+    monkeypatch.setenv("STUDENT_READONLY_PASSWORD", "student123")
+    monkeypatch.setenv(
+        "STUDENT_EDIT_TOKEN_SECRET", "edit-secret-that-is-at-least-32-characters"
+    )
+    monkeypatch.setenv(
+        "STUDENT_CREDENTIAL_PEPPER", "pepper-secret-that-is-at-least-32-characters"
+    )
+
+    class RpcResult:
+        data = [{"index_number": "250544U", "password_version": 2}]
+
+    class Database:
+        def rpc(self, name, params):
+            assert name == "consume_student_password_challenge"
+            assert "p_password_hash" in params
+            return self
+
+        def execute(self):
+            return RpcResult()
+
+    monkeypatch.setattr(api_server, "get_supabase", lambda: Database())
+    monkeypatch.setattr(api_server, "reserve_auth_request", lambda *_: 8)
+    monkeypatch.setattr(api_server, "set_auth_request_outcome", lambda *_: None)
+    monkeypatch.setattr(
+        api_server,
+        "find_student_auth_record_by_index",
+        lambda *_: {"index_number": "250544U", "name": "Student"},
+    )
+    response = api_server.create_or_reset_student_password(
+        api_server.StudentPasswordSetupInput(
+            password_setup_token="x" * 32,
+            password="allowed password",
+            password_confirmation="allowed password",
+        ),
+        request_from(),
+    )
+    assert response["access_mode"] == "editable"
+    assert api_server.verify_signed_token(response["edit_token"], "edit")["ver"] == 2
+
+
+def test_password_version_change_invalidates_existing_edit_token(monkeypatch):
+    monkeypatch.setenv(
+        "STUDENT_EDIT_TOKEN_SECRET", "edit-secret-that-is-at-least-32-characters"
+    )
+    monkeypatch.setattr(api_server, "get_supabase", lambda: object())
+    monkeypatch.setattr(
+        api_server,
+        "find_student_auth_record_by_index",
+        lambda *_: {"index_number": "250544U", "name": "Student"},
+    )
+    version = {"value": 1}
+    monkeypatch.setattr(
+        api_server,
+        "find_student_credential",
+        lambda *_: {"password_version": version["value"]},
+    )
+    token = api_server.issue_signed_token("edit", "250544U", 60, {"ver": 1})
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+    assert api_server.authenticate_student_token(credentials)["access_mode"] == "editable"
+    version["value"] = 2
+    with pytest.raises(HTTPException) as error:
+        api_server.authenticate_student_token(credentials)
+    assert error.value.status_code == 401
+
+
+def test_read_only_token_cannot_unlock_student_writes(monkeypatch):
+    monkeypatch.setenv("STUDENT_WRITES_ENABLED", "true")
+    monkeypatch.setenv(
+        "STUDENT_READ_TOKEN_SECRET", "read-secret-that-is-at-least-32-characters"
+    )
+    token = api_server.issue_signed_token("read", "250544U", 60)
+    with pytest.raises(HTTPException) as error:
+        api_server.require_editable_student(
+            HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        )
+    assert error.value.status_code == 403
+
+
+def test_preference_write_uses_token_identity_and_validates_unique_ranks(monkeypatch):
+    captured = {}
+
+    class Query:
+        data = []
+
+        def upsert(self, payload, **_kwargs):
+            captured.update(payload)
+            return self
+
+        def execute(self):
+            return self
+
+    class Database:
+        def table(self, name):
+            assert name == "student_preferences"
+            return Query()
+
+    monkeypatch.setattr(api_server, "get_supabase", lambda: Database())
+    valid = api_server.StudentPreferencesUpdateInput(**{
+        department: rank
+        for rank, department in enumerate(api_server.BASE_QUOTAS, start=1)
+    })
+    api_server.update_student_preferences(
+        valid,
+        {"index_number": "250544U", "name": "Student", "access_mode": "editable"},
+    )
+    assert captured["index_number"] == "250544U"
+    assert sorted(captured[department] for department in api_server.BASE_QUOTAS) == list(range(1, 11))
+
+    duplicate = api_server.StudentPreferencesUpdateInput(**{
+        department: 1 for department in api_server.BASE_QUOTAS
+    })
+    with pytest.raises(HTTPException) as error:
+        api_server.update_student_preferences(
+            duplicate,
+            {"index_number": "250544U", "name": "Student", "access_mode": "editable"},
+        )
+    assert error.value.status_code == 422
+
+
+def test_recovery_verification_stores_only_hashes(monkeypatch):
+    monkeypatch.setenv(
+        "STUDENT_CREDENTIAL_PEPPER", "pepper-secret-that-is-at-least-32-characters"
+    )
+    recovery_hash = api_server.hash_credential("0123456789012345")
+    inserted = {}
+
+    class Query:
+        def insert(self, payload):
+            inserted.update(payload)
+            return self
+
+        def execute(self):
+            return type("Result", (), {"data": [inserted]})()
+
+    class Database:
+        def table(self, name):
+            assert name == "student_password_challenges"
+            return Query()
+
+    monkeypatch.setattr(api_server, "get_supabase", lambda: Database())
+    monkeypatch.setattr(api_server, "reserve_auth_request", lambda *_: 1)
+    monkeypatch.setattr(api_server, "set_auth_request_outcome", lambda *_: None)
+    monkeypatch.setattr(
+        api_server,
+        "find_student_auth_record_by_index",
+        lambda *_: {"index_number": "250544U", "name": "Student"},
+    )
+    monkeypatch.setattr(
+        api_server,
+        "find_student_credential",
+        lambda *_: {
+            "recovery_code_hash": recovery_hash,
+            "recovery_version": 3,
+        },
+    )
+    response = api_server.verify_student_recovery_code(
+        api_server.StudentRecoveryVerifyInput(
+            index_number="250544U", recovery_code="0123-4567-8901-2345"
+        ),
+        request_from(),
+    )
+    assert response["expires_in"] == 600
+    assert "0123456789012345" not in str(inserted)
+    assert inserted["token_hash"] != response["password_setup_token"]
 
 
 def test_sensitive_read_routes_reject_missing_bearer_tokens():

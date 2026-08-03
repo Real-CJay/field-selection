@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
+  import StudentCredentialModal from '$lib/components/StudentCredentialModal.svelte';
   import {
     MODULE_GRADES,
     getEditableGradeFromGpa,
@@ -13,13 +14,16 @@
   } from '$lib/session';
   import type { ModuleGrade, StudentSession } from '$lib/types';
   import { studentRepository } from '$lib/student-repository';
-  import { clearStudentReadToken } from '$lib/student-api-session';
+  import { clearStudentApiSession, getStudentApiSession } from '$lib/student-api-session';
+  import { getStudentWritesEnabled, isStudentWriteAuthError, saveStudentModuleGrades } from '$lib/student-write-client';
   import { GRADE_EDITING_UNAVAILABLE } from '$lib/student-write-status';
 
   let session = $state<StudentSession | null>(null);
   let fluidMechanics = $state<ModuleGrade | ''>('');
   let mechanics = $state<ModuleGrade | ''>('');
   let message = $state('');
+  let authModalOpen = $state(false);
+  let saving = $state(false);
 
   onMount(async () => {
     session = getStudentSession();
@@ -45,7 +49,26 @@
     }
   });
 
-  function submit(event: SubmitEvent) {
+  async function saveCurrentGrades() {
+    if (!isModuleGrade(fluidMechanics) || !isModuleGrade(mechanics)) return;
+    saving = true;
+    message = '';
+    try {
+      await saveStudentModuleGrades({ fluidMechanics, mechanics });
+      await goto('/preferences');
+    } catch (error) {
+      if (isStudentWriteAuthError(error)) {
+        authModalOpen = true;
+        session = session ? { ...session, accessMode: 'read-only' } : session;
+        return;
+      }
+      message = error instanceof Error ? error.message : 'Unable to save module grades.';
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function submit(event: SubmitEvent) {
     event.preventDefault();
     if (!session) return;
     message = '';
@@ -54,12 +77,31 @@
       message = 'Select both your Fluid Mechanics and Mechanics grades.';
       return;
     }
-    message = GRADE_EDITING_UNAVAILABLE;
+    if (getStudentApiSession()?.accessMode === 'editable') {
+      await saveCurrentGrades();
+      return;
+    }
+    try {
+      if (!await getStudentWritesEnabled()) {
+        message = GRADE_EDITING_UNAVAILABLE;
+        return;
+      }
+    } catch (error) {
+      message = error instanceof Error ? error.message : 'Please log in again.';
+      return;
+    }
+    authModalOpen = true;
+  }
+
+  async function saveAfterAuthentication() {
+    authModalOpen = false;
+    session = getStudentSession();
+    await saveCurrentGrades();
   }
 
   async function logout() {
     clearStudentSession();
-    clearStudentReadToken();
+    clearStudentApiSession();
     await goto('/login');
   }
 </script>
@@ -72,7 +114,7 @@
       <div>
         <h1>Module Grades</h1>
         {#if session}
-          <p class="muted">{session.name} · {session.indexNumber}</p>
+          <p class="muted">{session.name} · {session.indexNumber} · <span class="access-badge">{session.accessMode === 'editable' ? 'Editable' : 'Read-only'}</span></p>
         {/if}
       </div>
       <button class="button secondary" type="button" onclick={logout}>Logout</button>
@@ -110,7 +152,7 @@
         <div class="message" role="alert">{message}</div>
       {/if}
 
-      <button class="button continue" type="submit">Continue to Preferences</button>
+      <button class="button continue" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Continue to Preferences'}</button>
     </form>
 
     <p class="temporary-note">
@@ -119,6 +161,15 @@
   </section>
 
 </main>
+
+{#if session}
+  <StudentCredentialModal
+    open={authModalOpen}
+    indexNumber={session.indexNumber}
+    onAuthenticated={saveAfterAuthentication}
+    onCancel={() => { authModalOpen = false; }}
+  />
+{/if}
 
 <style>
   .grade-page {
@@ -159,6 +210,8 @@
     font-size: 0.82rem;
     line-height: 1.5;
   }
+
+  .access-badge { font-weight: 700; color: #1d4ed8; }
 
   @media (max-width: 520px) {
     .grade-header {
