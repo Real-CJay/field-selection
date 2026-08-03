@@ -1,62 +1,28 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, expect, it, vi } from 'vitest';
 import { createStudentRepository } from './student-repository';
-import type { StudentPreferences } from './types';
 
 describe('student repository', () => {
-  it('looks up one student by index number', async () => {
-    const from = vi.fn();
+  it('loads student identity and read-only records through the backend loader', async () => {
     const recordLoader = vi.fn().mockResolvedValue({
-      index_number: '220001A', name: 'Test Student', results: null, preferences: null
+      index_number: '220001A',
+      name: 'Test Student',
+      results: { average_gpa: 3.5 },
+      preferences: { index_number: '220001A', computer: 1 }
     });
-    const repository = createStudentRepository(
-      { from } as unknown as SupabaseClient,
-      recordLoader
-    );
+    const repository = createStudentRepository(recordLoader);
 
-    await expect(repository.findStudent('220001A')).resolves.toMatchObject({
-      index_number: '220001A'
+    await expect(repository.findStudent('220001A')).resolves.toEqual({
+      index_number: '220001A',
+      name: 'Test Student'
     });
-    expect(recordLoader).toHaveBeenCalledWith('220001A');
-    expect(from).not.toHaveBeenCalled();
+    await expect(repository.getResults('220001A')).resolves.toMatchObject({ average_gpa: 3.5 });
+    await expect(repository.getPreferences('220001A')).resolves.toMatchObject({ computer: 1 });
+    expect(recordLoader).toHaveBeenCalledTimes(3);
   });
 
-  it('passes preference data to Supabase upsert with index conflict handling', async () => {
-    const upsert = vi.fn().mockResolvedValue({ error: null });
-    const from = vi.fn().mockReturnValue({ upsert });
-    const repository = createStudentRepository({ from } as unknown as SupabaseClient);
-    const preferences: StudentPreferences = {
-      index_number: '220001A', biomedical: 1, chemical: 2, civil: 3, computer: 4,
-      electrical: 5, electronic: 6, material: 7, mechanical: 8,
-      aeronautical: 9, mechatronics: 10
-    };
-
-    await repository.savePreferences(preferences);
-    expect(from).toHaveBeenCalledWith('student_preferences');
-    expect(upsert).toHaveBeenCalledWith(preferences, { onConflict: 'index_number' });
-  });
-
-  it('propagates Supabase errors', async () => {
-    const databaseError = new Error('database unavailable');
-    const upsert = vi.fn().mockResolvedValue({ error: databaseError });
-    const repository = createStudentRepository({
-      from: vi.fn().mockReturnValue({ upsert })
-    } as unknown as SupabaseClient);
-
-    await expect(repository.savePreferences({} as StudentPreferences)).rejects.toBe(databaseError);
-  });
-
-  it('saves both student-entered module grades together', async () => {
-    const upsert = vi.fn().mockResolvedValue({ error: null });
-    const from = vi.fn().mockReturnValue({ upsert });
-    const repository = createStudentRepository({ from } as unknown as SupabaseClient);
-
-    await repository.saveGrades('220001A', 3.7, 3.3);
-
-    expect(from).toHaveBeenCalledWith('student_results');
-    expect(upsert).toHaveBeenCalledWith(
-      { index_number: '220001A', fluids: 3.7, mechanics: 3.3 },
-      { onConflict: 'index_number' }
-    );
+  it('does not expose student write methods', () => {
+    const repository = createStudentRepository(vi.fn());
+    expect(repository).not.toHaveProperty('savePreferences');
+    expect(repository).not.toHaveProperty('saveGrades');
   });
 });

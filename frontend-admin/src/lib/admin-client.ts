@@ -22,13 +22,12 @@ function headers(token: string): HeadersInit {
 export async function authenticateAdmin(
   username: string,
   password: string,
-  turnstileToken: string,
   fetcher: typeof fetch = fetch
 ): Promise<{ username: string; admin_token: string }> {
   const response = await fetcher(`${baseUrl()}/api/admin/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password, turnstile_token: turnstileToken })
+    body: JSON.stringify({ username, password })
   });
   if (!response.ok) throw new Error(await message(response));
   return await response.json();

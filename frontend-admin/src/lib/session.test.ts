@@ -28,13 +28,13 @@ describe('student session', () => {
   });
 
   it('saves and restores a student session', () => {
-    const session = { indexNumber: '220001A', name: 'Test Student', accessMode: 'editable' as const };
+    const session = { indexNumber: '220001A', name: 'Test Student' };
     saveStudentSession(session);
     expect(getStudentSession()).toEqual(session);
   });
 
   it('clears a student session on logout', () => {
-    saveStudentSession({ indexNumber: '220001A', name: 'Test Student', accessMode: 'read-only' });
+    saveStudentSession({ indexNumber: '220001A', name: 'Test Student' });
     saveModuleGrades({ fluidMechanics: 'A-', mechanics: 'B+' });
     clearStudentSession();
     expect(getStudentSession()).toBeNull();
@@ -46,15 +46,14 @@ describe('student session', () => {
     expect(getStudentSession()).toBeNull();
   });
 
-  it('treats sessions created before OTP editing as read-only', () => {
+  it('restores sessions created before the authentication rollback', () => {
     localStorage.setItem(
       'field-selection-student',
       JSON.stringify({ indexNumber: '220001A', name: 'Test Student' })
     );
     expect(getStudentSession()).toEqual({
       indexNumber: '220001A',
-      name: 'Test Student',
-      accessMode: 'read-only'
+      name: 'Test Student'
     });
   });
 
@@ -66,7 +65,7 @@ describe('student session', () => {
 
   it('clears old module grades when a student logs in', () => {
     saveModuleGrades({ fluidMechanics: 'C', mechanics: 'B' });
-    saveStudentSession({ indexNumber: '220001A', name: 'Test Student', accessMode: 'read-only' });
+    saveStudentSession({ indexNumber: '220001A', name: 'Test Student' });
     expect(getModuleGrades()).toBeNull();
   });
 

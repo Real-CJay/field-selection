@@ -12,23 +12,19 @@ npm.cmd run dev
 Configure a local `.env`:
 
 ```env
-PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
 PUBLIC_API_BASE_URL=http://localhost:8000
-PUBLIC_TURNSTILE_SITE_KEY=your-turnstile-site-key
 ```
 
-Students sign in with an index number that exists in the `students` table. The shared password `student123` is read-only. A personal password, created after magic-link verification, enables student writes.
-
-During the staged rollout, all registered students can use the read-only portal. Student writes and email-verification testing remain limited to `250314P` and `250544U`; other students see a temporary unavailable message when they try to save.
+Students sign in with an index number that exists in the `students` table and the shared password
+`student123`. Every student session is read-only. Preference, grade, and correction changes display a
+temporary unavailable message and do not write data.
 
 ## Student flow
 
 - `/login` — student index and password
-- `/module-grades` — save Fluid Mechanics and Mechanics grades
+- `/module-grades` — view or enter Fluid Mechanics and Mechanics grades; saving is temporarily disabled
 - `/preferences` — rank all ten departments from 1 to 10
 - `/results` — module grades, four-decimal GPA, rank, estimated allocation, confidence, and cutoffs
-- `/auth/callback` — confirms a Supabase magic link and opens personal-password setup
 - `/fluid-mechanics` — compatibility redirect to `/module-grades`
 
 Saving preferences redirects to `/results`. The allocation request may take 50–60 seconds while a sleeping Render backend starts.
