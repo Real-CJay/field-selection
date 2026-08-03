@@ -815,8 +815,6 @@ def require_student_access(
     if token.startswith("read."):
         payload = verify_signed_token(token, "read")
         index_number = normalize_index_number(payload["sub"])
-        if not student_auth_is_allowed(index_number):
-            raise HTTPException(status_code=403, detail="The site is currently under maintenance.")
         student = find_student_auth_record_by_index(get_supabase(), index_number)
         if not student:
             raise HTTPException(status_code=401, detail="Student authentication is required.")
@@ -1336,9 +1334,6 @@ def sign_in_student(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid index number or password.",
     )
-    if not student_auth_is_allowed(index_number):
-        raise invalid_credentials
-
     try:
         database = get_supabase()
         request_id = reserve_auth_request(database, index_number, remote_ip, "login")
@@ -1355,6 +1350,9 @@ def sign_in_student(
                 "index_number": student["index_number"],
                 "name": student["name"],
             }
+
+        if not student_auth_is_allowed(index_number):
+            raise invalid_credentials
 
         email = student.get("email")
         if not isinstance(email, str) or not email.strip():

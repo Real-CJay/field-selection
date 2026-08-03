@@ -1,6 +1,7 @@
 <script lang="ts">
   import Turnstile from './Turnstile.svelte';
   import { requestStudentMagicLink } from '$lib/student-auth-client';
+  import { isMaintenancePreviewStudent } from '$lib/maintenance-access';
   import { clearPasswordSetup, markPasswordSetup } from '$lib/student-auth-state';
   import { saveStudentSession, getStudentSession } from '$lib/session';
   import { supabase } from '$lib/supabase';
@@ -31,6 +32,7 @@
   let message = $state('');
   let busy = $state(false);
   let wasOpen = false;
+  let canTestStudentWrites = $derived(isMaintenancePreviewStudent(indexNumber));
 
   $effect(() => {
     if (open && !wasOpen) {
@@ -44,6 +46,10 @@
   });
 
   async function sendMagicLink() {
+    if (!isMaintenancePreviewStudent(indexNumber)) {
+      message = 'Editing is currently under work. Please try again later.';
+      return;
+    }
     if (!turnstileToken) {
       message = 'Complete the security check first.';
       return;
@@ -91,8 +97,13 @@
 {#if open}
   <div class="modal-backdrop" role="presentation">
     <div class="card auth-modal" role="dialog" aria-modal="true" aria-labelledby="edit-auth-heading">
-      <h2 id="edit-auth-heading">Verify before saving</h2>
-      {#if mode === 'notice'}
+      {#if !canTestStudentWrites}
+        <h2 id="edit-auth-heading">Editing is currently under work</h2>
+        <p class="muted">Changes cannot be saved yet. Please try again later.</p>
+      {:else}
+        <h2 id="edit-auth-heading">Verify before saving</h2>
+      {/if}
+      {#if canTestStudentWrites && mode === 'notice'}
         <p class="muted">
           You are signed in with the read-only password. To make changes, log out and sign in with your personal password.
         </p>
@@ -104,10 +115,10 @@
         <button class="button secondary auth-action" type="button" onclick={sendMagicLink} disabled={busy}>
           {busy ? 'Sending confirmation email…' : 'Send confirmation email'}
         </button>
-      {:else if mode === 'magic-link-sent'}
+      {:else if canTestStudentWrites && mode === 'magic-link-sent'}
         <p class="muted">{message}</p>
         <p class="muted">Open the confirmation link in that email to continue.</p>
-      {:else}
+      {:else if canTestStudentWrites}
         <p class="muted">Your email has been verified. Create a new personal password for future changes.</p>
         <div class="field">
           <label for="personal-password">Personal password</label>
@@ -122,7 +133,7 @@
           {busy ? 'Creating password…' : 'Create personal password'}
         </button>
       {/if}
-      {#if message && mode !== 'magic-link-sent'}<div class="message" role="alert">{message}</div>{/if}
+      {#if canTestStudentWrites && message && mode !== 'magic-link-sent'}<div class="message" role="alert">{message}</div>{/if}
       <button class="button secondary cancel-auth" type="button" onclick={onCancel} disabled={busy}>Cancel</button>
     </div>
   </div>

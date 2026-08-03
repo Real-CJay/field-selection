@@ -229,6 +229,60 @@ def test_read_token_is_short_lived_signed_and_bound_to_one_index(monkeypatch):
     assert error.value.status_code == 403
 
 
+def test_maintenance_allows_registered_students_to_use_read_only_login(monkeypatch):
+    monkeypatch.setenv("MAINTENANCE_MODE", "true")
+    monkeypatch.setenv("MAINTENANCE_PREVIEW_INDEXES", "250314P,250544U")
+    monkeypatch.setenv("STUDENT_READONLY_PASSWORD", "student123")
+    monkeypatch.setenv(
+        "STUDENT_READ_TOKEN_SECRET", "read-secret-that-is-at-least-32-characters"
+    )
+    monkeypatch.setattr(api_server, "verify_turnstile", lambda *_: None)
+    monkeypatch.setattr(api_server, "get_supabase", lambda: object())
+    monkeypatch.setattr(api_server, "reserve_auth_request", lambda *_: 1)
+    monkeypatch.setattr(
+        api_server,
+        "find_student_auth_record_by_index",
+        lambda *_: {"index_number": "250745L", "name": "MM Bassam", "email": None},
+    )
+    monkeypatch.setattr(api_server, "set_auth_request_outcome", lambda *_: None)
+
+    response = api_server.sign_in_student(
+        api_server.StudentLoginInput(
+            index_number="250745L", password="student123", turnstile_token="turnstile"
+        ),
+        request_from(),
+    )
+
+    assert response["access_mode"] == "read-only"
+    assert response["index_number"] == "250745L"
+    assert response["read_token"].startswith("read.")
+
+
+def test_maintenance_read_token_can_access_its_own_student_record(monkeypatch):
+    monkeypatch.setenv("MAINTENANCE_MODE", "true")
+    monkeypatch.setenv("MAINTENANCE_PREVIEW_INDEXES", "250314P,250544U")
+    monkeypatch.setenv(
+        "STUDENT_READ_TOKEN_SECRET", "read-secret-that-is-at-least-32-characters"
+    )
+    monkeypatch.setattr(api_server, "get_supabase", lambda: object())
+    monkeypatch.setattr(
+        api_server,
+        "find_student_auth_record_by_index",
+        lambda *_: {"index_number": "250745L", "name": "MM Bassam"},
+    )
+    token = api_server.issue_signed_token("read", "250745L", 60)
+
+    identity = api_server.require_student_access(
+        HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+    )
+
+    assert identity == {
+        "index_number": "250745L",
+        "name": "MM Bassam",
+        "access_mode": "read-only",
+    }
+
+
 def test_sensitive_http_routes_reject_missing_bearer_tokens():
     from fastapi.testclient import TestClient
 

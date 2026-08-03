@@ -10,6 +10,7 @@
     validateRankings
   } from '$lib/preferences';
   import { hasSubmittedModuleGrades } from '$lib/module-grades';
+  import { isMaintenancePreviewStudent } from '$lib/maintenance-access';
   import {
     clearStudentSession,
     getModuleGrades,
@@ -96,6 +97,11 @@
 
     errorMessage = validateRankings(rankings) ?? '';
     if (errorMessage) return;
+
+    if (!isMaintenancePreviewStudent(session.indexNumber)) {
+      errorMessage = 'Preference editing is currently under work. Please try again later.';
+      return;
+    }
 
     if (isPasswordSetupPending(session.indexNumber) && await hasEditableSession(session.indexNumber)) {
       savePendingPreferences(session.indexNumber, rankings);

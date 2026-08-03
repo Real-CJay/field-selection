@@ -15,11 +15,12 @@ Configure a local `.env`:
 PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
 PUBLIC_API_BASE_URL=http://localhost:8000
-PUBLIC_MAINTENANCE_MODE=false
 PUBLIC_TURNSTILE_SITE_KEY=your-turnstile-site-key
 ```
 
 Students sign in with an index number that exists in the `students` table. The shared password `student123` is read-only. A personal password, created after magic-link verification, enables student writes.
+
+During the staged rollout, all registered students can use the read-only portal. Student writes and email-verification testing remain limited to `250314P` and `250544U`; other students see a temporary unavailable message when they try to save.
 
 ## Student flow
 
