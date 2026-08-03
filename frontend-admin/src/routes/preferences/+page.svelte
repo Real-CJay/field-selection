@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
+  import StudentWriteAuthModal from '$lib/components/StudentWriteAuthModal.svelte';
   import {
     DEPARTMENTS,
     emptyRankings,
@@ -9,6 +10,7 @@
     validateRankings
   } from '$lib/preferences';
   import { hasSubmittedModuleGrades } from '$lib/module-grades';
+  import { isMaintenancePreviewStudent } from '$lib/maintenance-access';
   import {
     clearStudentSession,
     getModuleGrades,
@@ -16,16 +18,17 @@
     saveStudentSession
   } from '$lib/session';
   import { studentRepository } from '$lib/student-repository';
+  import { hasEditableSession, signOutStudentAuth } from '$lib/student-edit-auth';
   import {
-    hasEditableSession,
-    sendPreferenceMagicLink,
-    signOutStudentAuth
-  } from '$lib/student-edit-auth';
+    clearPendingPreferences,
+    isPasswordSetupPending,
+    readPendingPreferences,
+    savePendingPreferences
+  } from '$lib/student-auth-state';
   import { POST_PREFERENCES_ROUTE } from '$lib/navigation';
   import type { StudentRankings, StudentSession } from '$lib/types';
 
   const rankOptions = Array.from({ length: DEPARTMENTS.length }, (_, index) => index + 1);
-  const PASSWORD_SETUP_INDEX_KEY = 'field-selection-password-setup-index';
 
   let session = $state<StudentSession | null>(null);
   let rankings = $state<StudentRankings>(emptyRankings());
@@ -33,11 +36,7 @@
   let saving = $state(false);
   let errorMessage = $state('');
   let showAuthentication = $state(false);
-  let authMode = $state<'notice' | 'magic-link-sent' | 'password'>('notice');
-  let personalPassword = $state('');
-  let passwordConfirmation = $state('');
-  let authMessage = $state('');
-  let authenticating = $state(false);
+  let authenticationMode = $state<'notice' | 'password'>('notice');
 
   let usedRanks = $derived(
     new Set(Object.values(rankings).filter((rank): rank is number => typeof rank === 'number'))
@@ -49,12 +48,9 @@
       await goto('/login', { replaceState: true });
       return;
     }
-    if (
-      localStorage.getItem(PASSWORD_SETUP_INDEX_KEY) === session.indexNumber
-      && await hasEditableSession(session.indexNumber, studentRepository.findStudentEmail)
-    ) {
+    if (isPasswordSetupPending(session.indexNumber) && await hasEditableSession(session.indexNumber)) {
       showAuthentication = true;
-      authMode = 'password';
+      authenticationMode = 'password';
     }
     try {
       const [saved, results] = await Promise.all([
@@ -66,6 +62,8 @@
         return;
       }
       if (saved) rankings = preferencesToRankings(saved);
+      const pending = readPendingPreferences(session.indexNumber);
+      if (pending) rankings = pending;
     } catch {
       errorMessage = 'Unable to load saved preferences. Please try again.';
     } finally {
@@ -84,6 +82,7 @@
     saving = true;
     try {
       await studentRepository.savePreferences(rankingsToPreferences(session.indexNumber, rankings));
+      clearPendingPreferences();
       await goto(POST_PREFERENCES_ROUTE);
     } catch {
       errorMessage = 'Unable to save preferences. Please try again.';
@@ -99,59 +98,31 @@
     errorMessage = validateRankings(rankings) ?? '';
     if (errorMessage) return;
 
-    if (await hasEditableSession(session.indexNumber, studentRepository.findStudentEmail)) {
+    if (!isMaintenancePreviewStudent(session.indexNumber)) {
+      errorMessage = 'Preference editing is currently under work. Please try again later.';
+      return;
+    }
+
+    if (isPasswordSetupPending(session.indexNumber) && await hasEditableSession(session.indexNumber)) {
+      savePendingPreferences(session.indexNumber, rankings);
+      authenticationMode = 'password';
+      showAuthentication = true;
+      return;
+    }
+    if (await hasEditableSession(session.indexNumber)) {
       await savePreferences();
       return;
     }
 
+    savePendingPreferences(session.indexNumber, rankings);
+    authenticationMode = 'notice';
     showAuthentication = true;
-    authMode = 'notice';
-    authMessage = '';
-    personalPassword = '';
-    passwordConfirmation = '';
   }
 
-  async function sendMagicLink() {
+  async function authenticatedAndSave() {
     if (!session) return;
-    authenticating = true;
-    authMessage = '';
-    const result = await sendPreferenceMagicLink(
-      session.indexNumber,
-      studentRepository.findStudentEmail,
-      `${window.location.origin}/preferences`
-    );
-    authenticating = false;
-    if (!result.ok) {
-      authMessage = result.message;
-      return;
-    }
-    localStorage.setItem(PASSWORD_SETUP_INDEX_KEY, session.indexNumber);
-    authMode = 'magic-link-sent';
-  }
-
-  async function createPassword() {
-    if (!session) return;
-    if (personalPassword.length < 8) {
-      authMessage = 'Use at least 8 characters for your personal password.';
-      return;
-    }
-    if (personalPassword !== passwordConfirmation) {
-      authMessage = 'The passwords do not match.';
-      return;
-    }
-    authenticating = true;
-    authMessage = '';
-    // The confirmed magic link already established the session. Update only the password here.
-    const { supabase } = await import('$lib/supabase');
-    const { error } = await supabase.auth.updateUser({ password: personalPassword });
-    authenticating = false;
-    if (error) {
-      authMessage = 'Unable to create your personal password. Please try again.';
-      return;
-    }
     session = { ...session, accessMode: 'editable' };
     saveStudentSession(session);
-    localStorage.removeItem(PASSWORD_SETUP_INDEX_KEY);
     showAuthentication = false;
     await savePreferences();
   }
@@ -229,43 +200,15 @@
     {/if}
   </section>
 
-  {#if showAuthentication}
-    <div class="modal-backdrop" role="presentation">
-      <div class="card auth-modal" role="dialog" aria-modal="true" aria-labelledby="edit-auth-heading">
-        <h2 id="edit-auth-heading">Verify before saving</h2>
-        {#if authMode === 'notice'}
-          <p class="muted">
-            You are signed in with the read-only password. To edit your preferences, log out and sign in with your personal password.
-          </p>
-          <button class="button auth-action" type="button" onclick={logout}>
-            Log out and sign in
-          </button>
-          <button class="button secondary auth-action" type="button" onclick={sendMagicLink} disabled={authenticating}>
-            {authenticating ? 'Sending confirmation email…' : 'Don’t have a personal password or forgot it?'}
-          </button>
-        {:else if authMode === 'magic-link-sent'}
-          <p class="muted">
-            Supabase has sent a confirmation email to your registered email address. Open the confirmation link in that email to continue.
-          </p>
-        {:else if authMode === 'password'}
-          <p class="muted">Your email has been verified. Create a new personal password for future preference changes.</p>
-          <div class="field">
-            <label for="personal-password">Personal password</label>
-            <input class="input" id="personal-password" type="password" bind:value={personalPassword} autocomplete="new-password" />
-          </div>
-          <div class="field">
-            <label for="personal-password-confirmation">Confirm personal password</label>
-            <input class="input" id="personal-password-confirmation" type="password" bind:value={passwordConfirmation} autocomplete="new-password" />
-          </div>
-          <p class="remember-password">Please remember this password. You will need it whenever you want to change your preferences.</p>
-          <button class="button auth-action" type="button" onclick={createPassword} disabled={authenticating}>
-            {authenticating ? 'Creating password…' : 'Create password and save preferences'}
-          </button>
-        {/if}
-        {#if authMessage}<div class="message" role="alert">{authMessage}</div>{/if}
-        <button class="button secondary cancel-auth" type="button" onclick={() => { showAuthentication = false; authMessage = ''; }} disabled={authenticating}>Cancel</button>
-      </div>
-    </div>
+  {#if session}
+    <StudentWriteAuthModal
+      open={showAuthentication}
+      indexNumber={session.indexNumber}
+      initialMode={authenticationMode}
+      onAuthenticated={authenticatedAndSave}
+      onCancel={() => { showAuthentication = false; }}
+      onLogout={logout}
+    />
   {/if}
 
 </main>
@@ -323,20 +266,6 @@
     margin: 24px 0 0;
     color: #6b7280;
   }
-
-  .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 20;
-    display: grid;
-    place-items: center;
-    padding: 20px;
-    background: rgb(15 23 42 / 58%);
-  }
-
-  .auth-modal { width: min(100%, 460px); }
-  .auth-action, .cancel-auth { width: 100%; margin-top: 14px; }
-  .remember-password { margin: 18px 0 0; color: #374151; font-size: 0.9rem; }
 
   @media (max-width: 520px) {
     .page-header {

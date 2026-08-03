@@ -1,0 +1,150 @@
+-- Preference history for future investigation and safe auditing.
+--
+-- Run this once in the Supabase SQL Editor.  It snapshots the preferences that
+-- exist at installation time, then records every later preference insert,
+-- change, and deletion.  It cannot recreate an earlier (pre-installation)
+-- version of a preference.
+
+begin;
+
+create schema if not exists private;
+
+create table if not exists public.student_preferences_history (
+  id bigint generated always as identity primary key,
+  index_number varchar not null,
+  operation varchar(10) not null check (operation in ('baseline', 'insert', 'update', 'delete')),
+  occurred_at timestamptz not null default now(),
+  old_biomedical integer,
+  old_chemical integer,
+  old_civil integer,
+  old_computer integer,
+  old_electrical integer,
+  old_electronic integer,
+  old_mechanical integer,
+  old_material integer,
+  old_aeronautical integer,
+  old_mechatronics integer,
+  old_submitted_at timestamptz,
+  new_biomedical integer,
+  new_chemical integer,
+  new_civil integer,
+  new_computer integer,
+  new_electrical integer,
+  new_electronic integer,
+  new_mechanical integer,
+  new_material integer,
+  new_aeronautical integer,
+  new_mechatronics integer,
+  new_submitted_at timestamptz
+);
+
+create index if not exists student_preferences_history_by_student_and_time
+  on public.student_preferences_history (index_number, occurred_at desc, id desc);
+
+-- Student clients must never be able to read, edit, or delete audit records.
+alter table public.student_preferences_history enable row level security;
+alter table public.student_preferences_history force row level security;
+revoke all on table public.student_preferences_history from anon, authenticated;
+revoke all on sequence public.student_preferences_history_id_seq from anon, authenticated;
+grant select on table public.student_preferences_history to service_role;
+
+create or replace function private.log_student_preferences_history()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public, private
+as $$
+begin
+  if tg_op = 'INSERT' then
+    insert into public.student_preferences_history (
+      index_number, operation,
+      new_biomedical, new_chemical, new_civil, new_computer, new_electrical,
+      new_electronic, new_mechanical, new_material, new_aeronautical,
+      new_mechatronics, new_submitted_at
+    ) values (
+      new.index_number, 'insert',
+      new.biomedical, new.chemical, new.civil, new.computer, new.electrical,
+      new.electronic, new.mechanical, new.material, new.aeronautical,
+      new.mechatronics, new.submitted_at
+    );
+    return new;
+  end if;
+
+  if tg_op = 'UPDATE' then
+    -- An upsert with identical ranks is not a meaningful preference change.
+    if (old.biomedical, old.chemical, old.civil, old.computer, old.electrical,
+        old.electronic, old.mechanical, old.material, old.aeronautical,
+        old.mechatronics)
+       is not distinct from
+       (new.biomedical, new.chemical, new.civil, new.computer, new.electrical,
+        new.electronic, new.mechanical, new.material, new.aeronautical,
+        new.mechatronics) then
+      return new;
+    end if;
+
+    insert into public.student_preferences_history (
+      index_number, operation,
+      old_biomedical, old_chemical, old_civil, old_computer, old_electrical,
+      old_electronic, old_mechanical, old_material, old_aeronautical,
+      old_mechatronics, old_submitted_at,
+      new_biomedical, new_chemical, new_civil, new_computer, new_electrical,
+      new_electronic, new_mechanical, new_material, new_aeronautical,
+      new_mechatronics, new_submitted_at
+    ) values (
+      new.index_number, 'update',
+      old.biomedical, old.chemical, old.civil, old.computer, old.electrical,
+      old.electronic, old.mechanical, old.material, old.aeronautical,
+      old.mechatronics, old.submitted_at,
+      new.biomedical, new.chemical, new.civil, new.computer, new.electrical,
+      new.electronic, new.mechanical, new.material, new.aeronautical,
+      new.mechatronics, new.submitted_at
+    );
+    return new;
+  end if;
+
+  insert into public.student_preferences_history (
+    index_number, operation,
+    old_biomedical, old_chemical, old_civil, old_computer, old_electrical,
+    old_electronic, old_mechanical, old_material, old_aeronautical,
+    old_mechatronics, old_submitted_at
+  ) values (
+    old.index_number, 'delete',
+    old.biomedical, old.chemical, old.civil, old.computer, old.electrical,
+    old.electronic, old.mechanical, old.material, old.aeronautical,
+    old.mechatronics, old.submitted_at
+  );
+  return old;
+end;
+$$;
+
+revoke all on function private.log_student_preferences_history() from public, anon, authenticated;
+
+drop trigger if exists student_preferences_history_audit on public.student_preferences;
+create trigger student_preferences_history_audit
+  after insert or update or delete on public.student_preferences
+  for each row execute function private.log_student_preferences_history();
+
+-- Baseline only: this preserves the state present when this script is first run.
+-- It intentionally does not pretend to know any preference versions from before
+-- this audit table existed.
+insert into public.student_preferences_history (
+  index_number, operation,
+  new_biomedical, new_chemical, new_civil, new_computer, new_electrical,
+  new_electronic, new_mechanical, new_material, new_aeronautical,
+  new_mechatronics, new_submitted_at
+)
+select
+  preferences.index_number, 'baseline',
+  preferences.biomedical, preferences.chemical, preferences.civil,
+  preferences.computer, preferences.electrical, preferences.electronic,
+  preferences.mechanical, preferences.material, preferences.aeronautical,
+  preferences.mechatronics, preferences.submitted_at
+from public.student_preferences as preferences
+where not exists (
+  select 1
+  from public.student_preferences_history as history
+  where history.index_number = preferences.index_number
+    and history.operation = 'baseline'
+);
+
+commit;

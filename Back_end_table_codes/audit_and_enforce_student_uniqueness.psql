@@ -1,10 +1,23 @@
 begin;
 
 -- Keep a recoverable copy of any duplicate preference rows before cleanup.
-create table if not exists public.student_preferences_duplicate_backup
+create schema if not exists private;
+
+do $$
+begin
+  if to_regclass('public.student_preferences_duplicate_backup') is not null
+     and to_regclass('private.student_preferences_duplicate_backup') is null then
+    alter table public.student_preferences_duplicate_backup set schema private;
+  end if;
+end $$;
+
+create table if not exists private.student_preferences_duplicate_backup
 as select * from public.student_preferences where false;
 
-insert into public.student_preferences_duplicate_backup
+revoke all on table private.student_preferences_duplicate_backup
+  from public, anon, authenticated;
+
+insert into private.student_preferences_duplicate_backup
 select duplicate_row.*
 from (
   select preferences.ctid as source_ctid,

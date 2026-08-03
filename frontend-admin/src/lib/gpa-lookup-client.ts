@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/public';
 import type { GpaLookupResult } from './types';
+import { getStudentApiToken } from './student-api-session';
 
 function baseUrl(): string {
   const value = env.PUBLIC_API_BASE_URL?.replace(/\/+$/, '');
@@ -19,8 +20,10 @@ export async function getAnonymousGpaLookup(
   gpa: string,
   fetcher: typeof fetch = fetch
 ): Promise<GpaLookupResult> {
+  const token = await getStudentApiToken();
   const response = await fetcher(
-    `${baseUrl()}/api/gpa-lookup?gpa=${encodeURIComponent(gpa)}`
+    `${baseUrl()}/api/gpa-lookup?gpa=${encodeURIComponent(gpa)}`,
+    { headers: { Authorization: `Bearer ${token}` } }
   );
   if (!response.ok) throw new Error(await errorMessage(response));
   return response.json();

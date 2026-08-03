@@ -17,30 +17,28 @@ async function readError(response: Response): Promise<string> {
 }
 
 export async function submitGradeCorrection(
-  indexNumber: string,
   module: CorrectableModule,
   requestedGrade: ModuleGrade,
+  accessToken: string,
   fetcher: typeof fetch = fetch
 ): Promise<void> {
   const response = await fetcher(`${apiBaseUrl()}/api/correction-requests`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ index_number: indexNumber, module, requested_grade: requestedGrade })
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ module, requested_grade: requestedGrade })
   });
   if (!response.ok) throw new Error(await readError(response));
 }
 
-export function basicAuthorization(username: string, password: string): string {
-  return `Basic ${btoa(`${username}:${password}`)}`;
-}
-
 export async function getCorrectionRequests(
-  username: string,
-  password: string,
+  adminToken: string,
   fetcher: typeof fetch = fetch
 ): Promise<GradeCorrectionRequest[]> {
   const response = await fetcher(`${apiBaseUrl()}/api/admin/correction-requests`, {
-    headers: { Authorization: basicAuthorization(username, password) }
+    headers: { Authorization: `Bearer ${adminToken}` }
   });
   if (!response.ok) throw new Error(await readError(response));
   return (await response.json()).requests;
@@ -49,14 +47,13 @@ export async function getCorrectionRequests(
 export async function reviewCorrectionRequest(
   id: number,
   decision: 'approved' | 'rejected',
-  username: string,
-  password: string,
+  adminToken: string,
   fetcher: typeof fetch = fetch
 ): Promise<void> {
   const response = await fetcher(`${apiBaseUrl()}/api/admin/correction-requests/${id}`, {
     method: 'PATCH',
     headers: {
-      Authorization: basicAuthorization(username, password),
+      Authorization: `Bearer ${adminToken}`,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({ decision })
@@ -67,13 +64,12 @@ export async function reviewCorrectionRequest(
 
 export async function revertCorrectionRequest(
   id: number,
-  username: string,
-  password: string,
+  adminToken: string,
   fetcher: typeof fetch = fetch
 ): Promise<void> {
   const response = await fetcher(`${apiBaseUrl()}/api/admin/correction-requests/${id}/revert`, {
     method: 'POST',
-    headers: { Authorization: basicAuthorization(username, password) }
+    headers: { Authorization: `Bearer ${adminToken}` }
   });
   if (!response.ok) throw new Error(await readError(response));
 }

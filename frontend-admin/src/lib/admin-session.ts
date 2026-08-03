@@ -1,18 +1,18 @@
-export interface AdminCredentials {
+export interface AdminSession {
   username: string;
-  password: string;
+  token: string;
 }
 
-let credentials: AdminCredentials | null = null;
+let adminSession: AdminSession | null = null;
 
-export function setAdminCredentials(value: AdminCredentials): void {
-  credentials = value;
+export function setAdminSession(value: AdminSession): void {
+  adminSession = { ...value };
 }
 
-export function getAdminCredentials(): AdminCredentials | null {
-  return credentials;
+export function getAdminSession(): AdminSession | null {
+  return adminSession ? { ...adminSession } : null;
 }
 
-export function clearAdminCredentials(): void {
-  credentials = null;
+export function clearAdminSession(): void {
+  adminSession = null;
 }

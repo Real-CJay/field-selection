@@ -1,20 +1,26 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import Turnstile from '$lib/components/Turnstile.svelte';
+  import { authenticateAdmin } from '$lib/admin-client';
+  import { clearAdminSession, setAdminSession } from '$lib/admin-session';
   import { getReturningStudentRoute } from '$lib/navigation';
-  import { authenticateStudent } from '$lib/student-auth';
-  import { signInWithPersonalPassword, signOutStudentAuth } from '$lib/student-edit-auth';
-  import { STUDENT_PASSWORD } from '$lib/credentials';
-  import { isMaintenancePreviewStudent } from '$lib/maintenance-access';
+  import { signOutStudentAuth } from '$lib/student-edit-auth';
+  import { signInStudent } from '$lib/student-auth-client';
+  import { saveStudentReadToken } from '$lib/student-api-session';
   import {
     clearStudentSession,
     saveStudentSession
   } from '$lib/session';
   import { studentRepository } from '$lib/student-repository';
+  import { supabase } from '$lib/supabase';
 
   let indexNumber = $state('');
   let password = $state('');
   let loading = $state(false);
   let message = $state('');
+  let turnstileToken = $state('');
+  let turnstileVersion = $state(0);
+  let isAdminUsername = $derived(indexNumber.trim().toLowerCase() === 'cjay');
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
@@ -22,68 +28,61 @@
     message = '';
 
     const normalizedIndex = indexNumber.trim().toUpperCase();
-    if (!isMaintenancePreviewStudent(normalizedIndex)) {
-      clearStudentSession();
-      await signOutStudentAuth();
-      await goto('/', { replaceState: true });
-      return;
-    }
-
-    if (password !== STUDENT_PASSWORD) {
-      const auth = await signInWithPersonalPassword(
-        indexNumber,
-        password,
-        studentRepository.findStudentEmail
-      );
-      if (!auth.ok) {
-        message = auth.message;
-        loading = false;
-        return;
-      }
-
-      const student = await studentRepository.findStudent(indexNumber.trim().toUpperCase());
-      if (!student) {
-        message = 'Unable to load the student record. Please try again.';
-        loading = false;
-        return;
-      }
-      saveStudentSession({
-        indexNumber: student.index_number,
-        name: student.name,
-        accessMode: 'editable'
-      });
-      try {
-        await goto(await getReturningStudentRoute(student.index_number, studentRepository.getResults, studentRepository.getPreferences));
-      } catch {
-        await goto('/preferences');
-      }
-      return;
-    }
-
-    await signOutStudentAuth();
-    const result = await authenticateStudent(indexNumber, password, studentRepository.findStudent);
-
-    if (!result.ok) {
-      message = result.message;
+    if (!turnstileToken) {
+      message = 'Complete the security check first.';
       loading = false;
       return;
     }
-
-    saveStudentSession({
-      indexNumber: result.student.index_number,
-      name: result.student.name,
-      accessMode: 'read-only'
-    });
-    try {
-      const route = await getReturningStudentRoute(
-        result.student.index_number,
-        studentRepository.getResults,
-        studentRepository.getPreferences
-      );
-      await goto(route);
-    } catch {
-      await goto('/module-grades');
+    if (isAdminUsername) {
+      try {
+        const adminUsername = 'CJay';
+        const result = await authenticateAdmin(adminUsername, password, turnstileToken);
+        clearStudentSession();
+        await signOutStudentAuth();
+        setAdminSession({ username: result.username, token: result.admin_token });
+        await goto('/admin');
+      } catch (error) {
+        message = error instanceof Error ? error.message : 'Invalid administrator credentials.';
+      } finally {
+        turnstileToken = '';
+        turnstileVersion += 1;
+        loading = false;
+      }
+      return;
     }
+
+    try {
+        clearAdminSession();
+        await signOutStudentAuth();
+        const login = await signInStudent(normalizedIndex, password, turnstileToken);
+        if (login.access_mode === 'editable') {
+        const { error } = await supabase.auth.setSession({
+            access_token: login.access_token,
+            refresh_token: login.refresh_token
+        });
+        if (error) throw error;
+        } else {
+          saveStudentReadToken(login.read_token);
+        }
+        saveStudentSession({
+          indexNumber: login.index_number,
+          name: login.name,
+          accessMode: login.access_mode
+        });
+        try {
+          await goto(await getReturningStudentRoute(login.index_number, studentRepository.getResults, studentRepository.getPreferences));
+        } catch {
+          await goto('/module-grades');
+        }
+      } catch (error) {
+        await signOutStudentAuth();
+        clearStudentSession();
+        message = error instanceof Error ? error.message : 'Unable to sign in. Please try again.';
+      } finally {
+        turnstileToken = '';
+        turnstileVersion += 1;
+        loading = false;
+      }
   }
 </script>
 
@@ -121,6 +120,13 @@
       {#if message}
         <div class="message" role="alert">{message}</div>
       {/if}
+
+      {#key turnstileVersion}
+        <Turnstile
+          action={isAdminUsername ? 'admin-auth' : 'student-auth'}
+          onToken={(token) => { turnstileToken = token; }}
+        />
+      {/key}
 
       <button class="button submit" type="submit" disabled={loading}>
         {loading ? 'Logging in…' : 'Login'}

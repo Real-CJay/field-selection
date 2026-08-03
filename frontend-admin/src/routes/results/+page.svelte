@@ -6,6 +6,7 @@
   import AllocationLoading from '$lib/components/AllocationLoading.svelte';
   import AllocationResults from '$lib/components/AllocationResults.svelte';
   import AllocationStatus from '$lib/components/AllocationStatus.svelte';
+  import StudentWriteAuthModal from '$lib/components/StudentWriteAuthModal.svelte';
   import { MODULE_GRADES, getGradeFromGpa, hasSubmittedModuleGrades } from '$lib/module-grades';
   import { submitGradeCorrection } from '$lib/correction-client';
   import { getStudentResultsEntryRoute } from '$lib/navigation';
@@ -14,7 +15,8 @@
     getStudentSession
   } from '$lib/session';
   import { studentRepository } from '$lib/student-repository';
-  import { signOutStudentAuth } from '$lib/student-edit-auth';
+  import { hasEditableSession, signOutStudentAuth } from '$lib/student-edit-auth';
+  import { supabase } from '$lib/supabase';
   import type {
     AllocationResult,
     StudentResults,
@@ -41,6 +43,7 @@
   let requestedGrade = $state<ModuleGrade | ''>('');
   let correctionMessage = $state('');
   let correctionSaving = $state(false);
+  let showAuthentication = $state(false);
 
   onMount(async () => {
     const activeSession = getStudentSession();
@@ -86,13 +89,15 @@
     await goto('/login');
   }
 
-  async function requestCorrection(event: SubmitEvent) {
-    event.preventDefault();
+  async function sendCorrection() {
     if (!session || !requestedGrade) return;
     correctionSaving = true;
     correctionMessage = '';
     try {
-      await submitGradeCorrection(session.indexNumber, correctionModule, requestedGrade);
+      const sessionResponse = await supabase.auth.getSession();
+      const accessToken = sessionResponse.data.session?.access_token;
+      if (sessionResponse.error || !accessToken) throw new Error('Verify your account before sending a correction request.');
+      await submitGradeCorrection(correctionModule, requestedGrade, accessToken);
       correctionMessage = 'Your correction request was sent to the administrator.';
       requestedGrade = '';
     } catch (error) {
@@ -100,6 +105,21 @@
     } finally {
       correctionSaving = false;
     }
+  }
+
+  async function requestCorrection(event: SubmitEvent) {
+    event.preventDefault();
+    if (!session || !requestedGrade) return;
+    if (!await hasEditableSession(session.indexNumber)) {
+      showAuthentication = true;
+      return;
+    }
+    await sendCorrection();
+  }
+
+  async function authenticatedAndSend() {
+    showAuthentication = false;
+    await sendCorrection();
   }
 </script>
 
@@ -183,6 +203,16 @@
       </section>
     {/if}
   </section>
+
+  {#if session}
+    <StudentWriteAuthModal
+      open={showAuthentication}
+      indexNumber={session.indexNumber}
+      onAuthenticated={authenticatedAndSend}
+      onCancel={() => { showAuthentication = false; }}
+      onLogout={logout}
+    />
+  {/if}
 
 </main>
 

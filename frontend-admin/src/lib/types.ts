@@ -1,7 +1,6 @@
 export interface Student {
   index_number: string;
   name: string;
-  email: string;
 }
 
 export interface StudentSession {
@@ -103,7 +102,7 @@ export interface AllocationResult {
   allocation_explanation: string | null;
   cutoffs: DepartmentCutoffs;
   total_students_processed: number;
-  accuracy_percentage: number;
+  coverage_percentage: number;
 }
 
 export type CorrectableModule = 'cse' | 'maths' | 'electrical' | 'material';
@@ -154,6 +153,8 @@ export interface GpaLookupResult {
   gpa: number;
   count: number;
   total_students_processed: number;
+  details_suppressed: boolean;
+  minimum_group_size: number;
   allocation_groups: GpaLookupAllocationGroup[];
   tiebreak_groups: GpaLookupTiebreakGroup[];
 }

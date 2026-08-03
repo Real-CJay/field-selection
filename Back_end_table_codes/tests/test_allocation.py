@@ -2,9 +2,10 @@ from decimal import Decimal
 import json
 import pytest
 from fastapi import HTTPException
-from fastapi.security import HTTPBasicCredentials
+from fastapi.security import HTTPAuthorizationCredentials
 
 from api_server import (
+    BASE_QUOTAS,
     aggregate_admin_departments,
     aggregate_cutoffs,
     aggregate_department_gpas,
@@ -12,7 +13,7 @@ from api_server import (
     aggregate_student_result,
     allocate_students,
     assign_competition_ranks,
-    calculate_accuracy,
+    calculate_cohort_coverage,
     calculate_allocation_gpa,
     calculate_average_gpa,
     calculate_tiebreaker,
@@ -22,6 +23,8 @@ from api_server import (
     normalize_grade_label,
     parse_lookup_gpa,
     require_admin,
+    issue_signed_token,
+    verify_signed_token,
 )
 
 
@@ -219,13 +222,43 @@ def test_cutoffs_and_anonymous_department_groups_use_two_decimal_gpa():
     states, processed, overflow = allocate_students(
         students, {"computer": 1, "civil": 1}
     )
-    assert aggregate_cutoffs(states, overflow) == {
-        "computer": {"status": "fixed", "value": 3.83, "incomplete": False, "selected_min": 1, "selected_max": 1, "quota": 200},
-        "civil": {"status": "fixed", "value": 3.82, "incomplete": False, "selected_min": 1, "selected_max": 1, "quota": 125},
+    assert aggregate_cutoffs(states, overflow, {"computer": 1, "civil": 1}) == {
+        "computer": {"status": "fixed", "value": 3.83, "incomplete": False, "selected_min": 1, "selected_max": 1, "quota": 1},
+        "civil": {"status": "fixed", "value": 3.82, "incomplete": False, "selected_min": 1, "selected_max": 1, "quota": 1},
     }
-    assert aggregate_department_gpas("computer", states, processed, overflow) == [
+    assert aggregate_department_gpas(
+        "computer", states, processed, overflow, minimum_group_size=1
+    ) == [
         {"gpa": 3.83, "min_count": 1, "max_count": 1}
     ]
+
+
+def test_department_distribution_hides_small_gpa_groups():
+    students = [student("PRIVATE-A", "3.5000", ["computer"])]
+    states, processed, overflow = allocate_students(students, {"computer": 1})
+    assert aggregate_department_gpas(
+        "computer", states, processed, overflow, minimum_group_size=3
+    ) == []
+
+
+def test_production_civil_quota_is_125():
+    assert BASE_QUOTAS["civil"] == 125
+    assert sum(BASE_QUOTAS.values()) == 753
+
+
+def test_unfilled_department_has_an_open_cutoff_even_when_a_zero_gpa_student_is_assigned():
+    students = [student("A", "0.0000", ["electronic"])]
+    states, _, overflow = allocate_students(students, {"electronic": 2})
+
+    assert aggregate_cutoffs(states, overflow, {"electronic": 2}) == {
+        "electronic": {
+            "status": "open",
+            "incomplete": False,
+            "selected_min": 1,
+            "selected_max": 1,
+            "quota": 2,
+        }
+    }
 
 
 def test_admin_department_view_lists_selected_students_and_boundary_tiebreakers():
@@ -276,7 +309,8 @@ def test_admin_department_view_marks_exact_tie_students_as_border_outcomes():
     assert all(item["tiebreaker"]["score_tied"] for item in computer["students"])
 
 
-def test_gpa_lookup_groups_allocations_and_tiebreaks_without_identities():
+def test_gpa_lookup_groups_allocations_and_tiebreaks_without_identities(monkeypatch):
+    monkeypatch.setenv("ANONYMOUS_LOOKUP_MIN_GROUP_SIZE", "2")
     students = [
         student("PRIVATE-A", "3.5000", ["computer", "civil"]),
         student("PRIVATE-B", "3.5000", ["computer", "civil"]),
@@ -292,6 +326,7 @@ def test_gpa_lookup_groups_allocations_and_tiebreaks_without_identities():
 
     assert result["count"] == 2
     assert result["total_students_processed"] == 3
+    assert result["details_suppressed"] is False
     assert result["allocation_groups"] == [{
         "allocation_status": "border",
         "assigned_department": None,
@@ -323,6 +358,24 @@ def test_gpa_lookup_returns_an_empty_private_result_for_no_matches():
     assert result["tiebreak_groups"] == []
 
 
+def test_gpa_lookup_suppresses_small_group_outcomes(monkeypatch):
+    monkeypatch.setenv("ANONYMOUS_LOOKUP_MIN_GROUP_SIZE", "3")
+    students = [
+        student("PRIVATE-A", "3.5000", ["computer", "civil"]),
+        student("PRIVATE-B", "3.5000", ["computer", "civil"]),
+    ]
+    states, processed, overflow = allocate_students(
+        students, {"computer": 1, "civil": 1}
+    )
+    result = aggregate_gpa_lookup(
+        Decimal("3.50"), states, processed, overflow, {"computer": 1, "civil": 1}
+    )
+    assert result["count"] == 2
+    assert result["details_suppressed"] is True
+    assert result["allocation_groups"] == []
+    assert result["tiebreak_groups"] == []
+
+
 @pytest.mark.parametrize("value", ["3.5", "3.500", "-0.01", "4.01", "text"])
 def test_gpa_lookup_requires_a_valid_two_decimal_value(value):
     with pytest.raises(HTTPException) as error:
@@ -350,17 +403,22 @@ def test_configured_state_limit_cannot_exceed_safety_cap(monkeypatch):
     assert get_state_limit() == 10_000
 
 
-def test_accuracy_is_one_decimal_and_capped_at_one_hundred():
-    assert calculate_accuracy(7) == 0.9
-    assert calculate_accuracy(743) == 100
-    assert calculate_accuracy(800) == 100
+def test_cohort_coverage_is_one_decimal_and_capped_at_one_hundred():
+    assert calculate_cohort_coverage(7) == 0.9
+    assert calculate_cohort_coverage(743) == 100
+    assert calculate_cohort_coverage(800) == 100
 
 
-def test_admin_credentials_are_checked_server_side(monkeypatch):
-    monkeypatch.setenv("ADMIN_USERNAME", "CJay")
-    monkeypatch.setenv("ADMIN_PASSWORD", "admin")
-    assert require_admin(HTTPBasicCredentials(username="CJay", password="admin")) == "CJay"
+def test_admin_session_tokens_are_signed_and_verified(monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN_SECRET", "admin-secret-that-is-at-least-32-characters")
+    token = issue_signed_token("admin", "CJay", 60)
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+    assert require_admin(credentials) == "CJay"
+    assert verify_signed_token(token, "admin")["sub"] == "CJay"
 
+    tampered = HTTPAuthorizationCredentials(
+        scheme="Bearer", credentials=f"{token[:-1]}{'A' if token[-1] != 'A' else 'B'}"
+    )
     with pytest.raises(HTTPException) as error:
-        require_admin(HTTPBasicCredentials(username="CJay", password="wrong"))
+        require_admin(tampered)
     assert error.value.status_code == 401

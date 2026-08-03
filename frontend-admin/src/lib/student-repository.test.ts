@@ -5,20 +5,20 @@ import type { StudentPreferences } from './types';
 
 describe('student repository', () => {
   it('looks up one student by index number', async () => {
-    const maybeSingle = vi.fn().mockResolvedValue({
-      data: { index_number: '220001A', name: 'Test Student', email: 'test@example.test' },
-      error: null
+    const from = vi.fn();
+    const recordLoader = vi.fn().mockResolvedValue({
+      index_number: '220001A', name: 'Test Student', results: null, preferences: null
     });
-    const eq = vi.fn().mockReturnValue({ maybeSingle });
-    const select = vi.fn().mockReturnValue({ eq });
-    const from = vi.fn().mockReturnValue({ select });
-    const repository = createStudentRepository({ from } as unknown as SupabaseClient);
+    const repository = createStudentRepository(
+      { from } as unknown as SupabaseClient,
+      recordLoader
+    );
 
     await expect(repository.findStudent('220001A')).resolves.toMatchObject({
       index_number: '220001A'
     });
-    expect(from).toHaveBeenCalledWith('students');
-    expect(eq).toHaveBeenCalledWith('index_number', '220001A');
+    expect(recordLoader).toHaveBeenCalledWith('220001A');
+    expect(from).not.toHaveBeenCalled();
   });
 
   it('passes preference data to Supabase upsert with index conflict handling', async () => {

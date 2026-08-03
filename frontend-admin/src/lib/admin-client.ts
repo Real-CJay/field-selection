@@ -1,5 +1,4 @@
 import { env } from '$env/dynamic/public';
-import { basicAuthorization } from './correction-client';
 import type { AdminDepartmentRecord, AdminStudentRecord, ModuleGrade } from './types';
 
 function baseUrl(): string {
@@ -16,40 +15,42 @@ async function message(response: Response): Promise<string> {
   }
 }
 
-function headers(username: string, password: string): HeadersInit {
-  return { Authorization: basicAuthorization(username, password) };
+function headers(token: string): HeadersInit {
+  return { Authorization: `Bearer ${token}` };
 }
 
 export async function authenticateAdmin(
   username: string,
   password: string,
+  turnstileToken: string,
   fetcher: typeof fetch = fetch
-): Promise<void> {
+): Promise<{ username: string; admin_token: string }> {
   const response = await fetcher(`${baseUrl()}/api/admin/login`, {
-    headers: headers(username, password)
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password, turnstile_token: turnstileToken })
   });
   if (!response.ok) throw new Error(await message(response));
+  return await response.json();
 }
 
 export async function getAdminStudents(
-  username: string,
-  password: string,
+  token: string,
   fetcher: typeof fetch = fetch
 ): Promise<AdminStudentRecord[]> {
   const response = await fetcher(`${baseUrl()}/api/admin/students`, {
-    headers: headers(username, password)
+    headers: headers(token)
   });
   if (!response.ok) throw new Error(await message(response));
   return (await response.json()).students;
 }
 
 export async function getAdminDepartments(
-  username: string,
-  password: string,
+  token: string,
   fetcher: typeof fetch = fetch
 ): Promise<AdminDepartmentRecord[]> {
   const response = await fetcher(`${baseUrl()}/api/admin/departments`, {
-    headers: headers(username, password)
+    headers: headers(token)
   });
   if (!response.ok) throw new Error(await message(response));
   return (await response.json()).departments;
@@ -58,8 +59,7 @@ export async function getAdminDepartments(
 export async function updateAdminGrades(
   indexNumber: string,
   grades: Partial<Record<'cse' | 'maths' | 'electrical' | 'fluids' | 'mechanics' | 'material', ModuleGrade>>,
-  username: string,
-  password: string,
+  token: string,
   fetcher: typeof fetch = fetch
 ): Promise<void> {
   const response = await fetcher(
@@ -67,7 +67,7 @@ export async function updateAdminGrades(
     {
       method: 'PATCH',
       headers: {
-        ...headers(username, password),
+        ...headers(token),
         'Content-Type': 'application/json'
       },
       body: JSON.stringify(grades)

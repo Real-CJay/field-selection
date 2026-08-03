@@ -1,26 +1,46 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, timezone
+import hashlib
+import hmac
 from itertools import combinations
+import json
+import logging
 from math import comb
 import os
 import re
 import secrets
+import time
 from typing import Any
+from urllib.error import URLError
+from urllib.parse import urlencode, urlparse
+from urllib.request import Request as UrlRequest, urlopen
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Path, status
+from fastapi import Depends, FastAPI, HTTPException, Path, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from pydantic import BaseModel
+from fastapi.security import (
+    HTTPAuthorizationCredentials,
+    HTTPBearer,
+)
+from pydantic import BaseModel, Field
 from supabase import Client, create_client
 
 load_dotenv()
 
-app = FastAPI(title="Field Selection Allocation API")
+api_docs_enabled = os.environ.get("ENABLE_API_DOCS", "false").lower() == "true"
+app = FastAPI(
+    title="Field Selection Allocation API",
+    docs_url="/docs" if api_docs_enabled else None,
+    redoc_url="/redoc" if api_docs_enabled else None,
+    openapi_url="/openapi.json" if api_docs_enabled else None,
+)
+logger = logging.getLogger("field_selection_api")
 
 frontend_origins = [
     origin.strip()
@@ -30,10 +50,22 @@ frontend_origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=frontend_origins,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["GET", "POST", "PATCH"],
-    allow_headers=["*"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next: Any) -> Response:
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 BASE_QUOTAS = {
     "biomedical": 15,
@@ -84,7 +116,13 @@ GRADE_LABELS = {
     2.3: "C+", 2.0: "C", 1.7: "C-", 1.0: "D", 0.0: "F",
 }
 GRADE_LABEL_VALUES = set(GRADE_LABELS.values())
-security = HTTPBasic()
+student_bearer = HTTPBearer(auto_error=False)
+admin_bearer = HTTPBearer(auto_error=False)
+GENERIC_MAGIC_LINK_MESSAGE = (
+    "If an eligible registered email address exists, a confirmation link has been sent. "
+    "Please check your inbox and spam folder."
+)
+TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
 
 @dataclass(frozen=True)
@@ -104,9 +142,29 @@ class AllocationState:
 
 
 class CorrectionRequestInput(BaseModel):
-    index_number: str
     module: str
     requested_grade: str
+
+
+class StudentMagicLinkInput(BaseModel):
+    index_number: str = Field(min_length=1, max_length=32)
+    turnstile_token: str = Field(min_length=1, max_length=2048)
+
+
+class StudentPasswordInput(BaseModel):
+    index_number: str = Field(min_length=1, max_length=32)
+    password: str = Field(min_length=1, max_length=256)
+    turnstile_token: str = Field(min_length=1, max_length=2048)
+
+
+class StudentLoginInput(StudentPasswordInput):
+    pass
+
+
+class AdminLoginInput(BaseModel):
+    username: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=1, max_length=256)
+    turnstile_token: str = Field(min_length=1, max_length=2048)
 
 
 class CorrectionDecisionInput(BaseModel):
@@ -120,25 +178,6 @@ class AdminGradeUpdateInput(BaseModel):
     fluids: str | None = None
     mechanics: str | None = None
     material: str | None = None
-
-
-def require_admin(credentials: HTTPBasicCredentials = Depends(security)) -> str:
-    expected_username = os.environ.get("ADMIN_USERNAME")
-    expected_password = os.environ.get("ADMIN_PASSWORD")
-    valid = bool(expected_username and expected_password)
-    if valid:
-        valid = secrets.compare_digest(credentials.username, expected_username) and secrets.compare_digest(
-            credentials.password, expected_password
-        )
-    if not valid:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid administrator credentials.",
-            headers={"WWW-Authenticate": "Basic"},
-        )
-    return credentials.username
-
-
 def grade_label(value: Any) -> str:
     if value is None:
         return "Not available"
@@ -465,6 +504,359 @@ def get_supabase() -> Client:
     return create_client(url, key)
 
 
+def get_supabase_auth() -> Client:
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_PUBLISHABLE_KEY")
+    if not url or not key:
+        raise RuntimeError(
+            "SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY must be configured."
+        )
+    # Auth clients hold session state, so create one per request instead of sharing it.
+    return create_client(url, key)
+
+
+def normalize_index_number(value: str) -> str:
+    return value.strip().upper()
+
+
+def _urlsafe_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _urlsafe_decode(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def signed_token_secret(token_type: str) -> str:
+    variable = (
+        "ADMIN_TOKEN_SECRET" if token_type == "admin" else "STUDENT_READ_TOKEN_SECRET"
+    )
+    secret = os.environ.get(variable)
+    if not secret or len(secret) < 32:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Secure session authentication is not configured.",
+        )
+    return secret
+
+
+def issue_signed_token(token_type: str, subject: str, lifetime_seconds: int) -> str:
+    current_time = int(time.time())
+    payload = {
+        "typ": token_type,
+        "sub": subject,
+        "iat": current_time,
+        "exp": current_time + lifetime_seconds,
+        "nonce": secrets.token_urlsafe(12),
+    }
+    encoded_payload = _urlsafe_encode(
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    )
+    signature = hmac.new(
+        signed_token_secret(token_type).encode("utf-8"),
+        encoded_payload.encode("ascii"),
+        hashlib.sha256,
+    ).digest()
+    return f"{token_type}.{encoded_payload}.{_urlsafe_encode(signature)}"
+
+
+def verify_signed_token(token: str, expected_type: str) -> dict[str, Any]:
+    try:
+        token_type, encoded_payload, encoded_signature = token.split(".", 2)
+        if token_type != expected_type:
+            raise ValueError("unexpected token type")
+        expected_signature = hmac.new(
+            signed_token_secret(expected_type).encode("utf-8"),
+            encoded_payload.encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+        if not secrets.compare_digest(
+            _urlsafe_decode(encoded_signature), expected_signature
+        ):
+            raise ValueError("invalid signature")
+        payload = json.loads(_urlsafe_decode(encoded_payload).decode("utf-8"))
+        current_time = int(time.time())
+        issued_at = int(payload.get("iat", 0))
+        expires_at = int(payload.get("exp", 0))
+        if (
+            payload.get("typ") != expected_type
+            or issued_at <= 0
+            or issued_at > current_time + 60
+            or expires_at <= current_time
+            or expires_at - issued_at > 60 * 60
+        ):
+            raise ValueError("expired token")
+        if not isinstance(payload.get("sub"), str) or not payload["sub"]:
+            raise ValueError("invalid subject")
+        return payload
+    except (
+        ValueError,
+        TypeError,
+        KeyError,
+        OverflowError,
+        UnicodeError,
+        binascii.Error,
+        json.JSONDecodeError,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication is required.",
+        ) from None
+
+
+def student_auth_is_allowed(index_number: str) -> bool:
+    maintenance_enabled = os.environ.get("MAINTENANCE_MODE", "true").lower() != "false"
+    if not maintenance_enabled:
+        return True
+    configured = os.environ.get(
+        "MAINTENANCE_PREVIEW_INDEXES", "250314P,250544U"
+    )
+    allowed = {
+        normalize_index_number(value)
+        for value in configured.split(",")
+        if value.strip()
+    }
+    return normalize_index_number(index_number) in allowed
+
+
+def request_ip(request: Request) -> str:
+    if os.environ.get("TRUST_PROXY_HEADERS", "false").lower() == "true":
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            return forwarded.split(",", 1)[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def verify_turnstile(
+    token: str, remote_ip: str, expected_action: str = "student-auth"
+) -> None:
+    secret = os.environ.get("TURNSTILE_SECRET_KEY")
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Student verification is not configured.",
+        )
+    if not token.strip():
+        raise HTTPException(status_code=422, detail="Complete the security check.")
+
+    body = urlencode({
+        "secret": secret,
+        "response": token,
+        "remoteip": remote_ip,
+    }).encode("utf-8")
+    verification_request = UrlRequest(
+        TURNSTILE_VERIFY_URL,
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urlopen(verification_request, timeout=8) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except (OSError, URLError, ValueError, json.JSONDecodeError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to complete the security check. Please try again.",
+        ) from error
+
+    if not result.get("success"):
+        raise HTTPException(status_code=422, detail="Complete the security check again.")
+    action = result.get("action")
+    if action != expected_action:
+        raise HTTPException(status_code=422, detail="Complete the security check again.")
+    configured_hostnames = {
+        value.strip().lower()
+        for value in os.environ.get("TURNSTILE_ALLOWED_HOSTNAMES", "").split(",")
+        if value.strip()
+    }
+    if not configured_hostnames:
+        configured_hostnames = {
+            parsed.hostname.lower()
+            for origin in frontend_origins
+            if (parsed := urlparse(origin)).hostname
+        }
+    hostname = str(result.get("hostname") or "").lower()
+    if configured_hostnames and hostname not in configured_hostnames:
+        raise HTTPException(status_code=422, detail="Complete the security check again.")
+
+
+def auth_request_hash(value: str) -> str:
+    key = os.environ.get("AUTH_RATE_LIMIT_HMAC_KEY")
+    if not key or len(key) < 32:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Student authentication limits are not configured.",
+        )
+    return hmac.new(key.encode("utf-8"), value.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def reserve_auth_request(
+    database: Client, index_number: str, remote_ip: str, request_type: str
+) -> int:
+    index_hash = auth_request_hash(f"index:{normalize_index_number(index_number)}")
+    ip_hash = auth_request_hash(f"ip:{remote_ip}")
+    try:
+        response = database.rpc("reserve_student_auth_request", {
+            "p_index_hash": index_hash,
+            "p_ip_hash": ip_hash,
+            "p_request_type": request_type,
+        }).execute()
+    except Exception as error:
+        if "AUTH_RATE_LIMIT" in str(error):
+            detail = (
+                "Please wait before requesting another confirmation email."
+                if request_type == "magic_link"
+                else "Too many unsuccessful attempts. Please wait and try again."
+            )
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=detail,
+            ) from error
+        raise
+    request_id = response.data[0] if isinstance(response.data, list) else response.data
+    if isinstance(request_id, dict):
+        request_id = next(iter(request_id.values()), None)
+    if not isinstance(request_id, int):
+        raise RuntimeError("Authentication request reservation failed.")
+    return request_id
+
+
+def set_auth_request_outcome(database: Client, request_id: int, outcome: str) -> None:
+    database.table("student_auth_requests").update({"outcome": outcome}).eq(
+        "id", request_id
+    ).execute()
+
+
+def find_student_auth_record_by_index(
+    database: Client, index_number: str
+) -> dict[str, Any] | None:
+    response = (
+        database.table("students")
+        .select("index_number,name,email,auth_user_id")
+        .eq("index_number", normalize_index_number(index_number))
+        .maybe_single()
+        .execute()
+    )
+    return response.data
+
+
+def find_student_auth_record_by_email(
+    database: Client, email: str
+) -> dict[str, Any] | None:
+    response = (
+        database.table("students")
+        .select("index_number,name,email,auth_user_id")
+        .ilike("email", email)
+        .execute()
+    )
+    matches = [
+        row for row in response.data
+        if isinstance(row.get("email"), str)
+        and row["email"].strip().lower() == email.strip().lower()
+    ]
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def bind_authenticated_student(email: str, user_id: str) -> dict[str, Any]:
+    database = get_supabase()
+    student = find_student_auth_record_by_email(database, email)
+    if not student:
+        raise HTTPException(status_code=403, detail="This account is not linked to a student.")
+    if not student_auth_is_allowed(student["index_number"]):
+        raise HTTPException(status_code=403, detail="The site is currently under maintenance.")
+    current_owner = student.get("auth_user_id")
+    if current_owner is None:
+        database.table("students").update({"auth_user_id": user_id}).eq(
+            "index_number", student["index_number"]
+        ).is_("auth_user_id", "null").execute()
+        student = find_student_auth_record_by_email(database, email)
+        current_owner = student.get("auth_user_id") if student else None
+    if str(current_owner) != user_id:
+        raise HTTPException(status_code=409, detail="This student account is already linked.")
+    return {
+        "index_number": student["index_number"],
+        "name": student["name"],
+        "auth_user_id": user_id,
+        "access_mode": "editable",
+    }
+
+
+def student_from_supabase_token(access_token: str) -> dict[str, Any]:
+    try:
+        user_response = get_supabase().auth.get_user(access_token)
+        user = user_response.user if user_response else None
+        email = getattr(user, "email", None)
+        user_id = str(getattr(user, "id", ""))
+        if not user or not isinstance(email, str) or not user_id:
+            raise HTTPException(status_code=401, detail="Student authentication is required.")
+        return bind_authenticated_student(email, user_id)
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=401, detail="Student authentication is required.") from error
+
+
+def require_student(
+    credentials: HTTPAuthorizationCredentials | None = Depends(student_bearer),
+) -> dict[str, Any]:
+    if not credentials or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Student authentication is required.")
+    return student_from_supabase_token(credentials.credentials)
+
+
+def require_student_access(
+    credentials: HTTPAuthorizationCredentials | None = Depends(student_bearer),
+) -> dict[str, Any]:
+    if not credentials or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Student authentication is required.")
+    token = credentials.credentials
+    if token.startswith("read."):
+        payload = verify_signed_token(token, "read")
+        index_number = normalize_index_number(payload["sub"])
+        student = find_student_auth_record_by_index(get_supabase(), index_number)
+        if not student:
+            raise HTTPException(status_code=401, detail="Student authentication is required.")
+        return {
+            "index_number": student["index_number"],
+            "name": student["name"],
+            "access_mode": "read-only",
+        }
+    return student_from_supabase_token(token)
+
+
+def require_admin(
+    credentials: HTTPAuthorizationCredentials | None = Depends(admin_bearer),
+) -> str:
+    if not credentials or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Administrator authentication is required.")
+    return str(verify_signed_token(credentials.credentials, "admin")["sub"])
+
+
+def log_admin_action(
+    database: Client,
+    admin_username: str,
+    action: str,
+    target: str,
+    details: dict[str, Any] | None = None,
+) -> None:
+    database.table("admin_action_audit").insert({
+        "admin_username": admin_username,
+        "action": action,
+        "target": target,
+        "details": details or {},
+    }).execute()
+
+
+def internal_server_exception(error: Exception) -> HTTPException:
+    logger.error("Unhandled API error type=%s", type(error).__name__)
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Unable to complete the request. Please try again.",
+    )
+
+
 def get_state_limit() -> int:
     try:
         configured = int(os.environ.get("ALLOCATION_STATE_LIMIT", DEFAULT_ALLOCATION_STATE_LIMIT))
@@ -493,8 +885,11 @@ def load_eligible_students() -> list[dict[str, Any]]:
 
 
 def aggregate_cutoffs(
-    states: list[AllocationState], overflow_gpa: Decimal | None
+    states: list[AllocationState],
+    overflow_gpa: Decimal | None,
+    quotas: dict[str, int] | None = None,
 ) -> dict[str, dict[str, Any]]:
+    quotas = quotas or BASE_QUOTAS
     result: dict[str, dict[str, Any]] = {}
     for department in states[0].cutoffs_dict():
         selected_counts = [
@@ -504,11 +899,14 @@ def aggregate_cutoffs(
         seat_fill = {
             "selected_min": min(selected_counts, default=0),
             "selected_max": max(selected_counts, default=0),
-            "quota": BASE_QUOTAS[department],
+            "quota": quotas[department],
         }
-        values = [state.cutoffs_dict()[department] for state in states]
+        closed_states = [
+            state for state in states if state.remaining_dict()[department] == 0
+        ]
+        values = [state.cutoffs_dict()[department] for state in closed_states]
         numeric = sorted({value for value in values if value is not None})
-        open_possible = any(value is None for value in values)
+        open_possible = len(closed_states) != len(states)
         if not numeric:
             result[department] = {
                 "status": "open", "incomplete": overflow_gpa is not None, **seat_fill
@@ -566,12 +964,13 @@ def aggregate_student_result(
     if guaranteed:
         explanation = (
             "Your placement is on the allocation border for one or more higher preferences. "
-            f"You are guaranteed {guaranteed} or a higher-ranked preference."
+            f"With the submissions currently available, the estimate is no lower than "
+            f"{guaranteed} or a higher-ranked preference."
         )
     else:
         explanation = (
-            "Your placement is on an unresolved allocation border and no department can yet be "
-            "guaranteed without subject marks."
+            "Your placement is on an unresolved allocation border. Current submissions and "
+            "subject marks are not sufficient to give a lower-bound estimate."
         )
     return {
         "allocation_status": "border",
@@ -583,12 +982,23 @@ def aggregate_student_result(
     }
 
 
+def anonymous_min_group_size() -> int:
+    try:
+        return max(
+            2, min(20, int(os.environ.get("ANONYMOUS_LOOKUP_MIN_GROUP_SIZE", "3")))
+        )
+    except ValueError:
+        return 3
+
+
 def aggregate_department_gpas(
     department: str,
     states: list[AllocationState],
     students: list[dict[str, Any]],
     overflow_gpa: Decimal | None,
+    minimum_group_size: int | None = None,
 ) -> list[dict[str, Any]]:
+    minimum_group_size = minimum_group_size or anonymous_min_group_size()
     gpas = sorted({student["allocation_gpa"] for student in students}, reverse=True)
     state_counts: list[dict[Decimal, int]] = []
     student_by_index = {student["index"]: student for student in students}
@@ -604,7 +1014,7 @@ def aggregate_department_gpas(
         if overflow_gpa is not None and gpa <= overflow_gpa:
             continue
         counts = [state.get(gpa, 0) for state in state_counts]
-        if max(counts, default=0) == 0:
+        if max(counts, default=0) < minimum_group_size:
             continue
         groups.append({
             "gpa": float(gpa),
@@ -623,7 +1033,7 @@ def aggregate_admin_departments(
     """Build an admin-only view of department membership across allocation states."""
     quotas = quotas or BASE_QUOTAS
     state_total = len(states)
-    cutoffs = aggregate_cutoffs(states, overflow_gpa)
+    cutoffs = aggregate_cutoffs(states, overflow_gpa, quotas)
     assignment_counts: dict[str, dict[str, int]] = {
         department: defaultdict(int) for department in quotas
     }
@@ -802,36 +1212,257 @@ def aggregate_gpa_lookup(
         )
     ]
 
+    minimum_group_size = anonymous_min_group_size()
+    details_suppressed = 0 < len(matching) < minimum_group_size
     return {
         "gpa": float(target_gpa),
         "count": len(matching),
         "total_students_processed": len(students),
-        "allocation_groups": allocation_groups,
-        "tiebreak_groups": tiebreak_groups,
+        "details_suppressed": details_suppressed,
+        "minimum_group_size": minimum_group_size,
+        "allocation_groups": [] if details_suppressed else allocation_groups,
+        "tiebreak_groups": [] if details_suppressed else tiebreak_groups,
     }
 
 
-def calculate_accuracy(total_students: int) -> float:
+def calculate_cohort_coverage(total_students: int) -> float:
     return round(min(100, total_students / TOTAL_COHORT * 100), 1)
 
 
+@app.post("/api/student/auth/magic-link", status_code=status.HTTP_202_ACCEPTED)
+def send_student_magic_link(
+    submitted: StudentMagicLinkInput,
+    request: Request,
+) -> dict[str, str]:
+    remote_ip = request_ip(request)
+    verify_turnstile(submitted.turnstile_token, remote_ip)
+    index_number = normalize_index_number(submitted.index_number)
+    generic_response = {"status": "accepted", "message": GENERIC_MAGIC_LINK_MESSAGE}
+
+    if not student_auth_is_allowed(index_number):
+        return generic_response
+
+    try:
+        database = get_supabase()
+        request_id = reserve_auth_request(database, index_number, remote_ip, "magic_link")
+        student = find_student_auth_record_by_index(database, index_number)
+        email = student.get("email") if student else None
+        if not isinstance(email, str) or not email.strip():
+            return generic_response
+
+        redirect_url = os.environ.get("FRONTEND_AUTH_CALLBACK_URL")
+        if not redirect_url:
+            raise RuntimeError("FRONTEND_AUTH_CALLBACK_URL must be configured.")
+        get_supabase_auth().auth.sign_in_with_otp({
+            "email": email.strip(),
+            "options": {
+                "email_redirect_to": redirect_url,
+                "should_create_user": True,
+            },
+        })
+        set_auth_request_outcome(database, request_id, "sent")
+        return generic_response
+    except HTTPException:
+        raise
+    except Exception as error:
+        # Do not let SMTP/configuration failures reveal whether an index has an email.
+        logger.warning(
+            "A student magic-link request could not be completed; error_type=%s",
+            type(error).__name__,
+        )
+        return generic_response
+
+
+@app.post("/api/student/auth/password")
+def sign_in_student_with_password(
+    submitted: StudentPasswordInput,
+    request: Request,
+) -> dict[str, Any]:
+    remote_ip = request_ip(request)
+    verify_turnstile(submitted.turnstile_token, remote_ip)
+    index_number = normalize_index_number(submitted.index_number)
+    invalid_credentials = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid index number or personal password.",
+    )
+    if not student_auth_is_allowed(index_number):
+        raise invalid_credentials
+
+    try:
+        database = get_supabase()
+        request_id = reserve_auth_request(database, index_number, remote_ip, "password")
+        student = find_student_auth_record_by_index(database, index_number)
+        email = student.get("email") if student else None
+        if not isinstance(email, str) or not email.strip():
+            raise invalid_credentials
+
+        try:
+            auth_response = get_supabase_auth().auth.sign_in_with_password({
+                "email": email.strip(),
+                "password": submitted.password,
+            })
+        except Exception:
+            raise invalid_credentials
+        session = auth_response.session
+        if not session:
+            raise invalid_credentials
+        set_auth_request_outcome(database, request_id, "success")
+        return {
+            "access_token": session.access_token,
+            "refresh_token": session.refresh_token,
+            "expires_at": session.expires_at,
+            "token_type": session.token_type,
+        }
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to sign in. Please try again.",
+        ) from error
+
+
+@app.post("/api/student/auth/login")
+def sign_in_student(
+    submitted: StudentLoginInput,
+    request: Request,
+) -> dict[str, Any]:
+    remote_ip = request_ip(request)
+    verify_turnstile(submitted.turnstile_token, remote_ip)
+    index_number = normalize_index_number(submitted.index_number)
+    invalid_credentials = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid index number or password.",
+    )
+    try:
+        database = get_supabase()
+        request_id = reserve_auth_request(database, index_number, remote_ip, "login")
+        student = find_student_auth_record_by_index(database, index_number)
+        if not student:
+            raise invalid_credentials
+
+        shared_password = os.environ.get("STUDENT_READONLY_PASSWORD")
+        if shared_password and secrets.compare_digest(submitted.password, shared_password):
+            set_auth_request_outcome(database, request_id, "success")
+            return {
+                "access_mode": "read-only",
+                "read_token": issue_signed_token("read", index_number, 30 * 60),
+                "index_number": student["index_number"],
+                "name": student["name"],
+            }
+
+        if not student_auth_is_allowed(index_number):
+            raise invalid_credentials
+
+        email = student.get("email")
+        if not isinstance(email, str) or not email.strip():
+            raise invalid_credentials
+        try:
+            auth_response = get_supabase_auth().auth.sign_in_with_password({
+                "email": email.strip(),
+                "password": submitted.password,
+            })
+        except Exception:
+            raise invalid_credentials
+        auth_session = auth_response.session
+        if not auth_session:
+            raise invalid_credentials
+        identity = student_from_supabase_token(auth_session.access_token)
+        if identity["index_number"] != index_number:
+            raise invalid_credentials
+        set_auth_request_outcome(database, request_id, "success")
+        return {
+            "access_mode": "editable",
+            "access_token": auth_session.access_token,
+            "refresh_token": auth_session.refresh_token,
+            "expires_at": auth_session.expires_at,
+            "token_type": auth_session.token_type,
+            "index_number": identity["index_number"],
+            "name": identity["name"],
+        }
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.error("Student login failed; error_type=%s", type(error).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to sign in. Please try again.",
+        ) from error
+
+
+@app.get("/api/student/auth/me")
+def get_authenticated_student(
+    student: dict[str, Any] = Depends(require_student_access),
+) -> dict[str, str]:
+    return {
+        "index_number": student["index_number"],
+        "name": student["name"],
+    }
+
+
+@app.get("/api/student/record")
+def get_student_record(
+    student: dict[str, Any] = Depends(require_student_access),
+) -> dict[str, Any]:
+    try:
+        response = (
+            get_supabase()
+            .table("students")
+            .select(
+                "index_number,name,"
+                "student_results(average_gpa,cse,electrical,fluids,maths,mechanics,material),"
+                "student_preferences(biomedical,chemical,civil,computer,electrical,electronic,"
+                "mechanical,material,aeronautical,mechatronics,submitted_at)"
+            )
+            .eq("index_number", student["index_number"])
+            .maybe_single()
+            .execute()
+        )
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Student record was not found.")
+        raw_results = response.data.get("student_results")
+        raw_preferences = response.data.get("student_preferences")
+        results = raw_results[0] if isinstance(raw_results, list) and raw_results else raw_results
+        preferences = (
+            raw_preferences[0]
+            if isinstance(raw_preferences, list) and raw_preferences
+            else raw_preferences
+        )
+        return {
+            "index_number": response.data["index_number"],
+            "name": response.data["name"],
+            "results": results,
+            "preferences": preferences,
+        }
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.error("Unable to load student record; error_type=%s", type(error).__name__)
+        raise HTTPException(status_code=500, detail="Unable to load the student record.") from error
+
+
 @app.get("/api/cutoffs")
-def get_estimated_cutoffs() -> dict[str, Any]:
+def get_estimated_cutoffs(
+    _: dict[str, Any] = Depends(require_student_access),
+) -> dict[str, Any]:
     try:
         states, students, overflow_gpa = run_allocation_engine()
         return {
             "status": "success",
             "total_students_processed": len(students),
-            "accuracy_percentage": calculate_accuracy(len(students)),
+            "coverage_percentage": calculate_cohort_coverage(len(students)),
             "cutoffs": aggregate_cutoffs(states, overflow_gpa),
             "allocation_incomplete": overflow_gpa is not None,
         }
     except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error)) from error
+        raise internal_server_exception(error) from error
 
 
 @app.get("/api/gpa-lookup")
-def get_gpa_lookup(gpa: str) -> dict[str, Any]:
+def get_gpa_lookup(
+    gpa: str,
+    _: dict[str, Any] = Depends(require_student_access),
+) -> dict[str, Any]:
     target_gpa = parse_lookup_gpa(gpa)
     try:
         states, students, overflow_gpa = run_allocation_engine()
@@ -840,17 +1471,21 @@ def get_gpa_lookup(gpa: str) -> dict[str, Any]:
             **aggregate_gpa_lookup(target_gpa, states, students, overflow_gpa),
         }
     except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error)) from error
+        raise internal_server_exception(error) from error
 
 
 @app.get("/api/allocation/{index_number}")
 def get_student_allocation(
     index_number: str = Path(..., title="The student's index number"),
+    student_access: dict[str, Any] = Depends(require_student_access),
 ) -> dict[str, Any]:
+    requested_index = normalize_index_number(index_number)
+    if requested_index != student_access["index_number"]:
+        raise HTTPException(status_code=403, detail="You can only view your own allocation.")
     try:
         states, students, overflow_gpa = run_allocation_engine()
         target = next(
-            (student for student in students if student["index"] == index_number), None
+            (student for student in students if student["index"] == requested_index), None
         )
         if not target:
             raise HTTPException(
@@ -869,16 +1504,19 @@ def get_student_allocation(
             "student_rank": target["student_rank"],
             "cutoffs": aggregate_cutoffs(states, overflow_gpa),
             "total_students_processed": len(students),
-            "accuracy_percentage": calculate_accuracy(len(students)),
+            "coverage_percentage": calculate_cohort_coverage(len(students)),
         }
     except HTTPException:
         raise
     except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error)) from error
+        raise internal_server_exception(error) from error
 
 
 @app.get("/api/departments/{department}/gpas")
-def get_department_gpas(department: str) -> dict[str, Any]:
+def get_department_gpas(
+    department: str,
+    _: dict[str, Any] = Depends(require_student_access),
+) -> dict[str, Any]:
     if department not in BASE_QUOTAS:
         raise HTTPException(status_code=404, detail="Department was not found.")
     try:
@@ -889,15 +1527,44 @@ def get_department_gpas(department: str) -> dict[str, Any]:
             "groups": aggregate_department_gpas(
                 department, states, students, overflow_gpa
             ),
+            "minimum_group_size": anonymous_min_group_size(),
             "incomplete": overflow_gpa is not None,
         }
     except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error)) from error
+        raise internal_server_exception(error) from error
 
 
-@app.get("/api/admin/login")
-def admin_login(username: str = Depends(require_admin)) -> dict[str, str]:
-    return {"status": "success", "username": username}
+@app.post("/api/admin/login")
+def admin_login(submitted: AdminLoginInput, request: Request) -> dict[str, str]:
+    remote_ip = request_ip(request)
+    verify_turnstile(submitted.turnstile_token, remote_ip, "admin-auth")
+    expected_username = os.environ.get("ADMIN_USERNAME")
+    expected_password = os.environ.get("ADMIN_PASSWORD")
+    try:
+        database = get_supabase()
+        request_id = reserve_auth_request(
+            database, f"admin:{submitted.username.lower()}", remote_ip, "admin_login"
+        )
+        valid = bool(expected_username and expected_password)
+        if valid:
+            valid = secrets.compare_digest(
+                submitted.username.casefold(), expected_username.casefold()
+            ) and secrets.compare_digest(submitted.password, expected_password)
+        if not valid:
+            raise HTTPException(status_code=401, detail="Invalid administrator credentials.")
+        set_auth_request_outcome(database, request_id, "success")
+        return {
+            "status": "success",
+            "username": expected_username,
+            "admin_token": issue_signed_token("admin", expected_username, 60 * 60),
+        }
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.error("Administrator login failed; error_type=%s", type(error).__name__)
+        raise HTTPException(
+            status_code=503, detail="Administrator login is temporarily unavailable."
+        ) from error
 
 
 @app.get("/api/admin/departments")
@@ -909,7 +1576,7 @@ def list_admin_departments(_: str = Depends(require_admin)) -> dict[str, Any]:
             "departments": aggregate_admin_departments(states, students, overflow_gpa),
         }
     except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error)) from error
+        raise internal_server_exception(error) from error
 
 
 @app.get("/api/admin/students")
@@ -968,14 +1635,14 @@ def list_admin_students(_: str = Depends(require_admin)) -> dict[str, Any]:
             })
         return {"status": "success", "students": rows}
     except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error)) from error
+        raise internal_server_exception(error) from error
 
 
 @app.patch("/api/admin/students/{index_number}/grades")
 def update_admin_student_grades(
     update: AdminGradeUpdateInput,
     index_number: str,
-    _: str = Depends(require_admin),
+    admin_username: str = Depends(require_admin),
 ) -> dict[str, Any]:
     submitted = update.model_dump(exclude_none=True)
     if not submitted:
@@ -1026,17 +1693,28 @@ def update_admin_student_grades(
                     "status", "pending"
                 ).execute()
 
+        log_admin_action(
+            database,
+            admin_username,
+            "student_grades_updated",
+            normalize_index_number(index_number),
+            {"modules": sorted(submitted)},
+        )
         return {"status": "success", "average_gpa": numeric_updates["average_gpa"]}
     except HTTPException:
         raise
     except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error)) from error
+        raise internal_server_exception(error) from error
 
 
 @app.post("/api/correction-requests", status_code=status.HTTP_201_CREATED)
-def create_correction_request(request: CorrectionRequestInput) -> dict[str, Any]:
-    module = request.module.strip().lower()
-    grade = request.requested_grade.strip().upper()
+def create_correction_request(
+    submitted: CorrectionRequestInput,
+    student: dict[str, Any] = Depends(require_student),
+) -> dict[str, Any]:
+    module = submitted.module.strip().lower()
+    grade = submitted.requested_grade.strip().upper()
+    index_number = student["index_number"]
     if module not in CORRECTABLE_MODULES or grade not in GRADE_VALUES:
         raise HTTPException(status_code=422, detail="Invalid module or requested grade.")
 
@@ -1045,7 +1723,7 @@ def create_correction_request(request: CorrectionRequestInput) -> dict[str, Any]
         result = (
             database.table("student_results")
             .select(f"index_number,{module}")
-            .eq("index_number", request.index_number)
+            .eq("index_number", index_number)
             .maybe_single()
             .execute()
         )
@@ -1055,7 +1733,7 @@ def create_correction_request(request: CorrectionRequestInput) -> dict[str, Any]
         existing = (
             database.table("grade_correction_requests")
             .select("id")
-            .eq("index_number", request.index_number)
+            .eq("index_number", index_number)
             .eq("module", module)
             .eq("status", "pending")
             .execute()
@@ -1064,7 +1742,7 @@ def create_correction_request(request: CorrectionRequestInput) -> dict[str, Any]
             raise HTTPException(status_code=409, detail="A pending request already exists for this module.")
 
         payload = {
-            "index_number": request.index_number,
+            "index_number": index_number,
             "module": module,
             "current_grade": grade_label(result.data.get(module)),
             "requested_grade": grade,
@@ -1087,7 +1765,7 @@ def create_correction_request(request: CorrectionRequestInput) -> dict[str, Any]
     except HTTPException:
         raise
     except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error)) from error
+        raise internal_server_exception(error) from error
 
 
 @app.get("/api/admin/correction-requests")
@@ -1120,13 +1798,13 @@ def list_correction_requests(_: str = Depends(require_admin)) -> dict[str, Any]:
             requests.append(normalized)
         return {"status": "success", "requests": requests}
     except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error)) from error
+        raise internal_server_exception(error) from error
 
 
 @app.post("/api/admin/correction-requests/{request_id}/revert")
 def revert_correction_request(
     request_id: int = Path(..., ge=1),
-    _: str = Depends(require_admin),
+    admin_username: str = Depends(require_admin),
 ) -> dict[str, Any]:
     try:
         database = get_supabase()
@@ -1173,20 +1851,27 @@ def revert_correction_request(
             "status": "reverted",
             "reverted_at": datetime.now(timezone.utc).isoformat(),
         }).eq("id", request_id).eq("status", "approved").execute()
+        log_admin_action(
+            database,
+            admin_username,
+            "correction_reverted",
+            str(request_id),
+            {"index_number": correction["index_number"], "module": module},
+        )
         return {"status": "success", "average_gpa": average_gpa}
     except HTTPException:
         raise
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error)) from error
+        raise internal_server_exception(error) from error
 
 
 @app.patch("/api/admin/correction-requests/{request_id}")
 def review_correction_request(
     decision: CorrectionDecisionInput,
     request_id: int = Path(..., ge=1),
-    _: str = Depends(require_admin),
+    admin_username: str = Depends(require_admin),
 ) -> dict[str, Any]:
     if decision.decision not in {"approved", "rejected"}:
         raise HTTPException(status_code=422, detail="Decision must be approved or rejected.")
@@ -1230,8 +1915,19 @@ def review_correction_request(
             "status": decision.decision,
             "reviewed_at": reviewed_at,
         }).eq("id", request_id).execute()
+        log_admin_action(
+            database,
+            admin_username,
+            "correction_reviewed",
+            str(request_id),
+            {
+                "index_number": correction["index_number"],
+                "module": correction["module"],
+                "decision": decision.decision,
+            },
+        )
         return {"status": "success", "decision": decision.decision}
     except HTTPException:
         raise
     except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error)) from error
+        raise internal_server_exception(error) from error

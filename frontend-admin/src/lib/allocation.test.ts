@@ -9,7 +9,7 @@ import {
   departmentsByDescendingCutoff,
   formatGpa,
   getAllocationErrorState,
-  getConfidence,
+  getCoverageBand,
   getDepartmentName,
   parseAllocationResult
 } from './allocation';
@@ -42,7 +42,7 @@ const responseBody = {
     mechatronics: { ...seat, status: 'range', min: 3.57, max: 3.6, open_possible: false, incomplete: false }
   },
   total_students_processed: 45,
-  accuracy_percentage: 6.1
+  coverage_percentage: 6.1
 } as const;
 
 describe('allocation results', () => {
@@ -86,16 +86,16 @@ describe('allocation results', () => {
     ]);
   });
 
-  it('maps every confidence boundary', () => {
-    expect(getConfidence(0).label).toBe('Very Low');
-    expect(getConfidence(59.9).label).toBe('Very Low');
-    expect(getConfidence(60).label).toBe('Low');
-    expect(getConfidence(70).label).toBe('Medium');
-    expect(getConfidence(80).label).toBe('Average');
-    expect(getConfidence(90).label).toBe('High');
-    expect(getConfidence(94.9).label).toBe('High');
-    expect(getConfidence(95).label).toBe('Very High');
-    expect(getConfidence(100).label).toBe('Very High');
+  it('maps every cohort-coverage boundary', () => {
+    expect(getCoverageBand(0).label).toBe('Very Low');
+    expect(getCoverageBand(59.9).label).toBe('Very Low');
+    expect(getCoverageBand(60).label).toBe('Low');
+    expect(getCoverageBand(70).label).toBe('Medium');
+    expect(getCoverageBand(80).label).toBe('Average');
+    expect(getCoverageBand(90).label).toBe('High');
+    expect(getCoverageBand(94.9).label).toBe('High');
+    expect(getCoverageBand(95).label).toBe('Very High');
+    expect(getCoverageBand(100).label).toBe('Very High');
   });
 
   it('provides the required loading and disclaimer copy', () => {
