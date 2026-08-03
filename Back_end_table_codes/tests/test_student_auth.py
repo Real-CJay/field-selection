@@ -400,6 +400,8 @@ def test_sensitive_read_routes_reject_missing_bearer_tokens():
         "/api/departments/computer/gpas",
         "/api/admin/departments",
         "/api/admin/students",
+        "/api/admin/reports/student-rankings.csv",
+        "/api/admin/reports/department-summary.csv",
         "/api/admin/correction-requests",
     ):
         response = client.get(path)

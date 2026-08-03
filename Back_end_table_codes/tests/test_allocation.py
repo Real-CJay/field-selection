@@ -6,6 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 
 from api_server import (
     BASE_QUOTAS,
+    admin_department_summary,
     aggregate_admin_departments,
     aggregate_cutoffs,
     aggregate_department_gpas,
@@ -17,6 +18,9 @@ from api_server import (
     calculate_allocation_gpa,
     calculate_average_gpa,
     calculate_tiebreaker,
+    csv_safe,
+    department_summary_report_rows,
+    detailed_department_report_rows,
     get_state_limit,
     grade_label,
     grade_value_from_label,
@@ -307,6 +311,51 @@ def test_admin_department_view_marks_exact_tie_students_as_border_outcomes():
     )
     assert {item["selection_status"] for item in computer["students"]} == {"border"}
     assert all(item["tiebreaker"]["score_tied"] for item in computer["students"])
+
+
+def test_admin_reports_number_students_per_department_and_summarize_capacity():
+    students = [
+        student("250001A", "3.6000", ["computer", "civil"]),
+        student("250002B", "3.5000", ["computer", "civil"]),
+    ]
+    quotas = {"computer": 2, "civil": 1}
+    states, processed, overflow = allocate_students(students, quotas)
+    departments = aggregate_admin_departments(states, processed, overflow, quotas)
+    summary = admin_department_summary(states, processed, departments)
+
+    detailed = detailed_department_report_rows(departments, processed)
+    detailed_columns = {name: index for index, name in enumerate(detailed[0])}
+    computer_rows = [row for row in detailed[1:] if row[0] == "Computer Science and Engineering"]
+    assert [row[1] for row in computer_rows] == [1, 2]
+    assert [row[2] for row in computer_rows] == ["250001A", "250002B"]
+    assert all(
+        [
+            row[detailed_columns["Department quota"]],
+            row[detailed_columns["Selected minimum"]],
+            row[detailed_columns["Selected maximum"]],
+        ] == [2, 2, 2]
+        for row in computer_rows
+    )
+    assert computer_rows[0][detailed_columns["Full preference order"]] == (
+        "Computer Science and Engineering > Civil Engineering"
+    )
+    assert computer_rows[0][detailed_columns["CSE grade"]] == "B (3.0)"
+
+    department_summary = department_summary_report_rows(departments, summary)
+    computer_summary = next(
+        row for row in department_summary[1:] if row[0] == "Computer Science and Engineering"
+    )
+    assert computer_summary[5:10] == [2, 2, 2, "100.0", "100.0"]
+    assert summary["total_capacity"] == 3
+    assert summary["selected_min"] == summary["selected_max"] == 2
+    assert summary["coverage_note"] == "Cohort coverage is not prediction accuracy."
+
+
+def test_csv_safe_prevents_spreadsheet_formula_injection():
+    assert csv_safe("=HYPERLINK(\"bad\")") == "'=HYPERLINK(\"bad\")"
+    assert csv_safe("+441234") == "'+441234"
+    assert csv_safe("  @SUM(A1:A2)") == "'  @SUM(A1:A2)"
+    assert csv_safe("250544U") == "250544U"
 
 
 def test_gpa_lookup_groups_allocations_and_tiebreaks_without_identities(monkeypatch):

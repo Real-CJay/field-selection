@@ -2,13 +2,20 @@
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { formatCutoff } from '$lib/allocation';
-  import { getAdminDepartments, getAdminStudents, updateAdminGrades } from '$lib/admin-client';
+  import {
+    getAdminDepartments,
+    getAdminReport,
+    getAdminStudents,
+    updateAdminGrades,
+    type AdminReportKind
+  } from '$lib/admin-client';
   import { clearAdminSession, getAdminSession } from '$lib/admin-session';
   import { getCorrectionRequests, revertCorrectionRequest, reviewCorrectionRequest } from '$lib/correction-client';
   import { MODULE_GRADES } from '$lib/module-grades';
   import { DEPARTMENTS } from '$lib/preferences';
   import type {
     AdminDepartmentRecord,
+    AdminDepartmentSummary,
     AdminStudentRecord,
     DepartmentId,
     GradeCorrectionRequest,
@@ -30,6 +37,9 @@
   let students = $state<AdminStudentRecord[]>([]);
   let requests = $state<GradeCorrectionRequest[]>([]);
   let departments = $state<AdminDepartmentRecord[]>([]);
+  let departmentSummary = $state<AdminDepartmentSummary | null>(null);
+  let studentSearch = $state('');
+  let downloadingReport = $state<AdminReportKind | null>(null);
   let activeSection = $state<AdminSection>('students');
   let selectedDepartment = $state<DepartmentId | null>(null);
   let loading = $state(true);
@@ -38,6 +48,20 @@
   let selectedDepartmentRecord = $derived(
     departments.find(({ department }) => department === selectedDepartment) ?? null
   );
+  let filteredStudents = $derived.by(() => {
+    const query = studentSearch.trim().toLowerCase();
+    if (!query) return students;
+    return students.filter((student) => {
+      const searchable = [
+        student.index_number,
+        student.name,
+        student.average_gpa === null ? '' : student.average_gpa.toFixed(4),
+        student.average_gpa === null ? '' : student.average_gpa.toFixed(2),
+        estimatedDepartment(student)
+      ].join(' ').toLowerCase();
+      return searchable.includes(query);
+    });
+  });
 
   onMount(async () => {
     if (!getAdminSession()) {
@@ -52,11 +76,15 @@
     if (!adminSession) return;
     loading = true;
     try {
-      [students, requests, departments] = await Promise.all([
+      const [studentRecords, correctionRequests, departmentData] = await Promise.all([
         getAdminStudents(adminSession.token),
         getCorrectionRequests(adminSession.token),
         getAdminDepartments(adminSession.token)
       ]);
+      students = studentRecords;
+      requests = correctionRequests;
+      departments = departmentData.departments;
+      departmentSummary = departmentData.summary;
       if (selectedDepartment && !departments.some(({ department }) => department === selectedDepartment)) {
         selectedDepartment = null;
       }
@@ -160,6 +188,30 @@
     selectedDepartment = department;
   }
 
+  async function downloadReport(kind: AdminReportKind) {
+    const adminSession = getAdminSession();
+    if (!adminSession) return;
+    downloadingReport = kind;
+    try {
+      const report = await getAdminReport(kind, adminSession.token);
+      const url = URL.createObjectURL(report.blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = report.filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      message = kind === 'student-rankings'
+        ? 'Detailed ranked-student report downloaded.'
+        : 'Department summary report downloaded.';
+    } catch (error) {
+      message = error instanceof Error ? error.message : 'Unable to download the report.';
+    } finally {
+      downloadingReport = null;
+    }
+  }
+
   function selectionCount(department: AdminDepartmentRecord): string {
     return department.selected_min === department.selected_max
       ? `${department.selected_max} selected`
@@ -198,13 +250,25 @@
     <section class="card admin-section" aria-labelledby="students-heading">
       <div class="section-heading">
         <div><h2 id="students-heading">Student full records</h2><p class="muted">Complete grades, ranked preferences, submission time, and current allocation.</p></div>
-        <button class="button secondary" type="button" disabled={loading} onclick={refresh}>Refresh</button>
+        <div class="section-actions">
+          <label class="student-search">
+            <span>Search students</span>
+            <input
+              class="input"
+              type="search"
+              placeholder="Index, name, GPA, or department"
+              bind:value={studentSearch}
+            />
+          </label>
+          <button class="button secondary" type="button" disabled={loading} onclick={refresh}>Refresh</button>
+        </div>
       </div>
+      <p class="record-count">Showing {filteredStudents.length} of {students.length} students</p>
       <div class="table-wrap">
         <table class="student-table">
           <thead><tr><th>Student</th><th>GPA</th><th>Grades</th><th>Preferences</th><th>Submitted</th><th>Estimated department</th></tr></thead>
           <tbody>
-            {#each students as student}
+            {#each filteredStudents as student}
               <tr>
                 <td><strong>{student.index_number}</strong><small>{student.name}</small></td>
                 <td>{student.average_gpa === null ? 'Incomplete' : student.average_gpa.toFixed(4)}</td>
@@ -234,6 +298,9 @@
                 </td>
               </tr>
             {/each}
+            {#if filteredStudents.length === 0}
+              <tr><td class="empty-row" colspan="6">No students match your search.</td></tr>
+            {/if}
           </tbody>
         </table>
       </div>
@@ -279,7 +346,46 @@
     <section class="card admin-section" aria-labelledby="departments-heading">
       <div class="section-heading">
         <div><h2 id="departments-heading">Departments and selected students</h2><p class="muted">Choose a department to inspect its current allocation and boundary outcomes.</p></div>
+        <div class="report-actions">
+          <button
+            class="button secondary"
+            type="button"
+            disabled={loading || downloadingReport !== null}
+            onclick={() => downloadReport('student-rankings')}
+          >{downloadingReport === 'student-rankings' ? 'Preparing…' : 'Download detailed rankings CSV'}</button>
+          <button
+            class="button secondary"
+            type="button"
+            disabled={loading || downloadingReport !== null}
+            onclick={() => downloadReport('department-summary')}
+          >{downloadingReport === 'department-summary' ? 'Preparing…' : 'Download department summary CSV'}</button>
+        </div>
       </div>
+      {#if departmentSummary}
+        <div class="summary-grid" aria-label="Department allocation summary">
+          <div class="summary-card">
+            <span>Eligible cohort processed</span>
+            <strong>{departmentSummary.total_students_processed} / {departmentSummary.total_cohort}</strong>
+          </div>
+          <div class="summary-card">
+            <span>Cohort coverage</span>
+            <strong>{departmentSummary.coverage_percentage.toFixed(1)}% · {departmentSummary.coverage_band}</strong>
+            <small>{departmentSummary.coverage_note}</small>
+          </div>
+          <div class="summary-card">
+            <span>Currently allocated</span>
+            <strong>
+              {departmentSummary.selected_min === departmentSummary.selected_max
+                ? departmentSummary.selected_max
+                : `${departmentSummary.selected_min}–${departmentSummary.selected_max}`}
+            </strong>
+          </div>
+          <div class="summary-card">
+            <span>Total department capacity</span>
+            <strong>{departmentSummary.total_capacity}</strong>
+          </div>
+        </div>
+      {/if}
       <div class="department-grid">
         {#each departments as department}
           <button class:selected={selectedDepartment === department.department} type="button" onclick={() => openDepartment(department.department)}>
@@ -307,10 +413,11 @@
           {:else}
             <div class="table-wrap">
               <table class="department-table">
-                <thead><tr><th>Student</th><th>Average GPA</th><th>Allocation GPA</th><th>Selection</th><th>Tie-break</th></tr></thead>
+                <thead><tr><th>Department rank</th><th>Student</th><th>Average GPA</th><th>Allocation GPA</th><th>Selection</th><th>Tie-break</th></tr></thead>
                 <tbody>
-                  {#each selectedDepartmentRecord.students as student}
+                  {#each selectedDepartmentRecord.students as student, index}
                     <tr class:border-row={student.selection_status === 'border'}>
+                      <td><strong>{index + 1}</strong></td>
                       <td><strong>{student.index_number}</strong><small>{student.name}</small></td>
                       <td>{student.average_gpa.toFixed(4)}</td>
                       <td>{student.allocation_gpa.toFixed(2)}</td>
@@ -363,6 +470,17 @@
   .section-nav button.active { border-color: #2563eb; background: #eff6ff; color: #1e3a8a; }
   .section-nav small { color: #6b7280; font-size: .75rem; font-weight: 600; }
   .admin-section { margin-top: 20px; }
+  .section-actions { display: flex; align-items: flex-end; gap: 10px; }
+  .student-search { display: grid; min-width: 310px; gap: 5px; color: #374151; font-size: .78rem; font-weight: 700; }
+  .student-search .input { min-width: 0; margin: 0; }
+  .record-count { margin: 14px 0 0; color: #6b7280; font-size: .85rem; }
+  .empty-row { padding: 28px; color: #6b7280; text-align: center; }
+  .report-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+  .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 20px; }
+  .summary-card { display: grid; align-content: start; gap: 5px; border: 1px solid #dbeafe; border-radius: 8px; background: #f8fbff; padding: 14px; }
+  .summary-card span { color: #4b5563; font-size: .78rem; font-weight: 700; }
+  .summary-card strong { color: #1e3a8a; font-size: 1.2rem; }
+  .summary-card small { color: #6b7280; font-size: .72rem; line-height: 1.35; }
   .table-wrap { margin-top: 18px; overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; }
   .student-table { min-width: 1260px; }
@@ -406,8 +524,14 @@
   .tie-indicator:hover .tie-tooltip, .tie-indicator:focus-within .tie-tooltip { opacity: 1; transform: translateY(0); }
   @media (max-width: 760px) {
     .admin-header, .section-heading, .department-detail-heading, .request { align-items: stretch; flex-direction: column; }
+    .section-actions, .report-actions { align-items: stretch; flex-direction: column; }
+    .student-search { min-width: 0; }
+    .summary-grid { grid-template-columns: 1fr 1fr; }
     .section-nav { grid-template-columns: 1fr; }
     .review-actions .button { flex: 1; }
     .tie-tooltip { right: auto; left: 0; width: min(280px, 75vw); }
+  }
+  @media (max-width: 480px) {
+    .summary-grid { grid-template-columns: 1fr; }
   }
 </style>
