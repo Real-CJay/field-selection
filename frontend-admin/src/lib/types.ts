@@ -6,7 +6,6 @@ export interface Student {
 export interface StudentSession {
   indexNumber: string;
   name: string;
-  accessMode: 'read-only' | 'editable';
 }
 
 export type ModuleGrade =

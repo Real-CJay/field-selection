@@ -1,31 +1,21 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import StudentWriteAuthModal from '$lib/components/StudentWriteAuthModal.svelte';
   import {
     DEPARTMENTS,
     emptyRankings,
     preferencesToRankings,
-    rankingsToPreferences,
     validateRankings
   } from '$lib/preferences';
   import { hasSubmittedModuleGrades } from '$lib/module-grades';
-  import { isMaintenancePreviewStudent } from '$lib/maintenance-access';
   import {
     clearStudentSession,
     getModuleGrades,
-    getStudentSession,
-    saveStudentSession
+    getStudentSession
   } from '$lib/session';
+  import { clearStudentReadToken } from '$lib/student-api-session';
   import { studentRepository } from '$lib/student-repository';
-  import { hasEditableSession, signOutStudentAuth } from '$lib/student-edit-auth';
-  import {
-    clearPendingPreferences,
-    isPasswordSetupPending,
-    readPendingPreferences,
-    savePendingPreferences
-  } from '$lib/student-auth-state';
-  import { POST_PREFERENCES_ROUTE } from '$lib/navigation';
+  import { PREFERENCE_EDITING_UNAVAILABLE } from '$lib/student-write-status';
   import type { StudentRankings, StudentSession } from '$lib/types';
 
   const rankOptions = Array.from({ length: DEPARTMENTS.length }, (_, index) => index + 1);
@@ -33,10 +23,7 @@
   let session = $state<StudentSession | null>(null);
   let rankings = $state<StudentRankings>(emptyRankings());
   let loading = $state(true);
-  let saving = $state(false);
   let errorMessage = $state('');
-  let showAuthentication = $state(false);
-  let authenticationMode = $state<'notice' | 'password'>('notice');
 
   let usedRanks = $derived(
     new Set(Object.values(rankings).filter((rank): rank is number => typeof rank === 'number'))
@@ -48,10 +35,6 @@
       await goto('/login', { replaceState: true });
       return;
     }
-    if (isPasswordSetupPending(session.indexNumber) && await hasEditableSession(session.indexNumber)) {
-      showAuthentication = true;
-      authenticationMode = 'password';
-    }
     try {
       const [saved, results] = await Promise.all([
         studentRepository.getPreferences(session.indexNumber),
@@ -62,8 +45,6 @@
         return;
       }
       if (saved) rankings = preferencesToRankings(saved);
-      const pending = readPendingPreferences(session.indexNumber);
-      if (pending) rankings = pending;
     } catch {
       errorMessage = 'Unable to load saved preferences. Please try again.';
     } finally {
@@ -77,59 +58,19 @@
     errorMessage = '';
   }
 
-  async function savePreferences() {
-    if (!session) return;
-    saving = true;
-    try {
-      await studentRepository.savePreferences(rankingsToPreferences(session.indexNumber, rankings));
-      clearPendingPreferences();
-      await goto(POST_PREFERENCES_ROUTE);
-    } catch {
-      errorMessage = 'Unable to save preferences. Please try again.';
-    } finally {
-      saving = false;
-    }
-  }
-
-  async function submit(event: SubmitEvent) {
+  function submit(event: SubmitEvent) {
     event.preventDefault();
     if (!session) return;
 
     errorMessage = validateRankings(rankings) ?? '';
     if (errorMessage) return;
 
-    if (!isMaintenancePreviewStudent(session.indexNumber)) {
-      errorMessage = 'Preference editing is currently under work. Please try again later.';
-      return;
-    }
-
-    if (isPasswordSetupPending(session.indexNumber) && await hasEditableSession(session.indexNumber)) {
-      savePendingPreferences(session.indexNumber, rankings);
-      authenticationMode = 'password';
-      showAuthentication = true;
-      return;
-    }
-    if (await hasEditableSession(session.indexNumber)) {
-      await savePreferences();
-      return;
-    }
-
-    savePendingPreferences(session.indexNumber, rankings);
-    authenticationMode = 'notice';
-    showAuthentication = true;
-  }
-
-  async function authenticatedAndSave() {
-    if (!session) return;
-    session = { ...session, accessMode: 'editable' };
-    saveStudentSession(session);
-    showAuthentication = false;
-    await savePreferences();
+    errorMessage = PREFERENCE_EDITING_UNAVAILABLE;
   }
 
   async function logout() {
     clearStudentSession();
-    await signOutStudentAuth();
+    clearStudentReadToken();
     await goto('/login');
   }
 </script>
@@ -193,23 +134,10 @@
         {#if errorMessage}
           <div class="message" role="alert">{errorMessage}</div>
         {/if}
-        <button class="button save" type="submit" disabled={saving}>
-          {saving ? 'Saving…' : 'Save Preferences'}
-        </button>
+        <button class="button save" type="submit">Save Preferences</button>
       </form>
     {/if}
   </section>
-
-  {#if session}
-    <StudentWriteAuthModal
-      open={showAuthentication}
-      indexNumber={session.indexNumber}
-      initialMode={authenticationMode}
-      onAuthenticated={authenticatedAndSave}
-      onCancel={() => { showAuthentication = false; }}
-      onLogout={logout}
-    />
-  {/if}
 
 </main>
 

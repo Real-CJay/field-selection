@@ -1,7 +1,5 @@
 import { env } from '$env/dynamic/public';
-import type { SupabaseClient } from '@supabase/supabase-js';
 import { getStudentApiToken } from './student-api-session';
-import { supabase } from './supabase';
 import type { Student, StudentPreferences, StudentResults } from './types';
 
 interface StudentRecord extends Student {
@@ -29,7 +27,6 @@ async function loadRecord(indexNumber: string, fetcher: typeof fetch = fetch): P
 }
 
 export function createStudentRepository(
-  client: SupabaseClient,
   recordLoader: (indexNumber: string) => Promise<StudentRecord> = loadRecord
 ) {
   return {
@@ -44,22 +41,8 @@ export function createStudentRepository(
 
     async getResults(indexNumber: string): Promise<StudentResults | null> {
       return (await recordLoader(indexNumber)).results;
-    },
-
-    async savePreferences(preferences: StudentPreferences): Promise<void> {
-      const { error } = await client
-        .from('student_preferences')
-        .upsert(preferences, { onConflict: 'index_number' });
-      if (error) throw error;
-    },
-
-    async saveGrades(indexNumber: string, fluids: number, mechanics: number): Promise<void> {
-      const { error } = await client
-        .from('student_results')
-        .upsert({ index_number: indexNumber, fluids, mechanics }, { onConflict: 'index_number' });
-      if (error) throw error;
     }
   };
 }
 
-export const studentRepository = createStudentRepository(supabase);
+export const studentRepository = createStudentRepository();

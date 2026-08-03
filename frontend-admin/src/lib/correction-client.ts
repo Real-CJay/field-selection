@@ -1,5 +1,5 @@
 import { env } from '$env/dynamic/public';
-import type { CorrectableModule, GradeCorrectionRequest, ModuleGrade } from './types';
+import type { GradeCorrectionRequest } from './types';
 
 function apiBaseUrl(): string {
   const value = env.PUBLIC_API_BASE_URL?.replace(/\/+$/, '');
@@ -14,23 +14,6 @@ async function readError(response: Response): Promise<string> {
   } catch {
     return 'The request could not be completed.';
   }
-}
-
-export async function submitGradeCorrection(
-  module: CorrectableModule,
-  requestedGrade: ModuleGrade,
-  accessToken: string,
-  fetcher: typeof fetch = fetch
-): Promise<void> {
-  const response = await fetcher(`${apiBaseUrl()}/api/correction-requests`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ module, requested_grade: requestedGrade })
-  });
-  if (!response.ok) throw new Error(await readError(response));
 }
 
 export async function getCorrectionRequests(

@@ -8,7 +8,7 @@ describe('admin authentication client', () => {
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     ));
 
-    await expect(authenticateAdmin('CJay', 'admin-password', 'turnstile-token', fetcher))
+    await expect(authenticateAdmin('CJay', 'admin-password', fetcher))
       .resolves.toEqual({ username: 'CJay', admin_token: 'signed-token' });
 
     expect(fetcher).toHaveBeenCalledOnce();
@@ -16,8 +16,7 @@ describe('admin authentication client', () => {
     expect(String(url)).toMatch(/\/api\/admin\/login$/);
     expect(JSON.parse(options.body)).toEqual({
       username: 'CJay',
-      password: 'admin-password',
-      turnstile_token: 'turnstile-token'
+      password: 'admin-password'
     });
     expect(options.headers.Authorization).toBeUndefined();
   });
@@ -28,7 +27,7 @@ describe('admin authentication client', () => {
       { status: 401, headers: { 'Content-Type': 'application/json' } }
     ));
 
-    await expect(authenticateAdmin('CJay', 'wrong-password', 'turnstile-token', fetcher)).rejects.toThrow(
+    await expect(authenticateAdmin('CJay', 'wrong-password', fetcher)).rejects.toThrow(
       'Invalid administrator credentials.'
     );
   });

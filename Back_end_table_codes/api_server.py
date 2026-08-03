@@ -17,9 +17,6 @@ import re
 import secrets
 import time
 from typing import Any
-from urllib.error import URLError
-from urllib.parse import urlencode, urlparse
-from urllib.request import Request as UrlRequest, urlopen
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Path, Request, Response, status
@@ -106,7 +103,6 @@ DISPLAY_GPA_PRECISION = Decimal("0.0001")
 ALLOCATION_GPA_PRECISION = Decimal("0.01")
 TOTAL_COHORT = 743
 DEFAULT_ALLOCATION_STATE_LIMIT = 10_000
-CORRECTABLE_MODULES = {"cse", "maths", "electrical", "material"}
 GRADE_VALUES = {
     "A+": 4.0, "A": 4.0, "A-": 3.7, "B+": 3.3, "B": 3.0, "B-": 2.7,
     "C+": 2.3, "C": 2.0, "C-": 1.7, "D": 1.0, "F": 0.0,
@@ -118,11 +114,6 @@ GRADE_LABELS = {
 GRADE_LABEL_VALUES = set(GRADE_LABELS.values())
 student_bearer = HTTPBearer(auto_error=False)
 admin_bearer = HTTPBearer(auto_error=False)
-GENERIC_MAGIC_LINK_MESSAGE = (
-    "If an eligible registered email address exists, a confirmation link has been sent. "
-    "Please check your inbox and spam folder."
-)
-TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
 
 @dataclass(frozen=True)
@@ -146,25 +137,14 @@ class CorrectionRequestInput(BaseModel):
     requested_grade: str
 
 
-class StudentMagicLinkInput(BaseModel):
-    index_number: str = Field(min_length=1, max_length=32)
-    turnstile_token: str = Field(min_length=1, max_length=2048)
-
-
-class StudentPasswordInput(BaseModel):
+class StudentLoginInput(BaseModel):
     index_number: str = Field(min_length=1, max_length=32)
     password: str = Field(min_length=1, max_length=256)
-    turnstile_token: str = Field(min_length=1, max_length=2048)
-
-
-class StudentLoginInput(StudentPasswordInput):
-    pass
 
 
 class AdminLoginInput(BaseModel):
     username: str = Field(min_length=1, max_length=128)
     password: str = Field(min_length=1, max_length=256)
-    turnstile_token: str = Field(min_length=1, max_length=2048)
 
 
 class CorrectionDecisionInput(BaseModel):
@@ -178,6 +158,8 @@ class AdminGradeUpdateInput(BaseModel):
     fluids: str | None = None
     mechanics: str | None = None
     material: str | None = None
+
+
 def grade_label(value: Any) -> str:
     if value is None:
         return "Not available"
@@ -200,11 +182,6 @@ def grade_value_from_label(value: Any) -> float:
     if label in GRADE_VALUES:
         return GRADE_VALUES[label]
     raise ValueError("The original grade is not available, so this request cannot be reverted.")
-
-
-def is_legacy_numeric_grade_error(error: Exception) -> bool:
-    detail = str(error).lower()
-    return "22p02" in detail or "invalid input syntax for type numeric" in detail
 
 
 def is_legacy_status_constraint_error(error: Exception) -> bool:
@@ -504,17 +481,6 @@ def get_supabase() -> Client:
     return create_client(url, key)
 
 
-def get_supabase_auth() -> Client:
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_PUBLISHABLE_KEY")
-    if not url or not key:
-        raise RuntimeError(
-            "SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY must be configured."
-        )
-    # Auth clients hold session state, so create one per request instead of sharing it.
-    return create_client(url, key)
-
-
 def normalize_index_number(value: str) -> str:
     return value.strip().upper()
 
@@ -524,7 +490,12 @@ def _urlsafe_encode(value: bytes) -> str:
 
 
 def _urlsafe_decode(value: str) -> bytes:
-    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    decoded = base64.b64decode(
+        value + "=" * (-len(value) % 4), altchars=b"-_", validate=True
+    )
+    if _urlsafe_encode(decoded) != value:
+        raise ValueError("non-canonical base64 encoding")
+    return decoded
 
 
 def signed_token_secret(token_type: str) -> str:
@@ -604,80 +575,12 @@ def verify_signed_token(token: str, expected_type: str) -> dict[str, Any]:
         ) from None
 
 
-def student_auth_is_allowed(index_number: str) -> bool:
-    maintenance_enabled = os.environ.get("MAINTENANCE_MODE", "true").lower() != "false"
-    if not maintenance_enabled:
-        return True
-    configured = os.environ.get(
-        "MAINTENANCE_PREVIEW_INDEXES", "250314P,250544U"
-    )
-    allowed = {
-        normalize_index_number(value)
-        for value in configured.split(",")
-        if value.strip()
-    }
-    return normalize_index_number(index_number) in allowed
-
-
 def request_ip(request: Request) -> str:
     if os.environ.get("TRUST_PROXY_HEADERS", "false").lower() == "true":
         forwarded = request.headers.get("x-forwarded-for", "")
         if forwarded:
             return forwarded.split(",", 1)[0].strip()
     return request.client.host if request.client else "unknown"
-
-
-def verify_turnstile(
-    token: str, remote_ip: str, expected_action: str = "student-auth"
-) -> None:
-    secret = os.environ.get("TURNSTILE_SECRET_KEY")
-    if not secret:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Student verification is not configured.",
-        )
-    if not token.strip():
-        raise HTTPException(status_code=422, detail="Complete the security check.")
-
-    body = urlencode({
-        "secret": secret,
-        "response": token,
-        "remoteip": remote_ip,
-    }).encode("utf-8")
-    verification_request = UrlRequest(
-        TURNSTILE_VERIFY_URL,
-        data=body,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
-    )
-    try:
-        with urlopen(verification_request, timeout=8) as response:
-            result = json.loads(response.read().decode("utf-8"))
-    except (OSError, URLError, ValueError, json.JSONDecodeError) as error:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Unable to complete the security check. Please try again.",
-        ) from error
-
-    if not result.get("success"):
-        raise HTTPException(status_code=422, detail="Complete the security check again.")
-    action = result.get("action")
-    if action != expected_action:
-        raise HTTPException(status_code=422, detail="Complete the security check again.")
-    configured_hostnames = {
-        value.strip().lower()
-        for value in os.environ.get("TURNSTILE_ALLOWED_HOSTNAMES", "").split(",")
-        if value.strip()
-    }
-    if not configured_hostnames:
-        configured_hostnames = {
-            parsed.hostname.lower()
-            for origin in frontend_origins
-            if (parsed := urlparse(origin)).hostname
-        }
-    hostname = str(result.get("hostname") or "").lower()
-    if configured_hostnames and hostname not in configured_hostnames:
-        raise HTTPException(status_code=422, detail="Complete the security check again.")
 
 
 def auth_request_hash(value: str) -> str:
@@ -703,14 +606,9 @@ def reserve_auth_request(
         }).execute()
     except Exception as error:
         if "AUTH_RATE_LIMIT" in str(error):
-            detail = (
-                "Please wait before requesting another confirmation email."
-                if request_type == "magic_link"
-                else "Too many unsuccessful attempts. Please wait and try again."
-            )
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=detail,
+                detail="Too many unsuccessful attempts. Please wait and try again.",
             ) from error
         raise
     request_id = response.data[0] if isinstance(response.data, list) else response.data
@@ -732,7 +630,7 @@ def find_student_auth_record_by_index(
 ) -> dict[str, Any] | None:
     response = (
         database.table("students")
-        .select("index_number,name,email,auth_user_id")
+        .select("index_number,name")
         .eq("index_number", normalize_index_number(index_number))
         .maybe_single()
         .execute()
@@ -740,90 +638,21 @@ def find_student_auth_record_by_index(
     return response.data
 
 
-def find_student_auth_record_by_email(
-    database: Client, email: str
-) -> dict[str, Any] | None:
-    response = (
-        database.table("students")
-        .select("index_number,name,email,auth_user_id")
-        .ilike("email", email)
-        .execute()
-    )
-    matches = [
-        row for row in response.data
-        if isinstance(row.get("email"), str)
-        and row["email"].strip().lower() == email.strip().lower()
-    ]
-    if len(matches) != 1:
-        return None
-    return matches[0]
-
-
-def bind_authenticated_student(email: str, user_id: str) -> dict[str, Any]:
-    database = get_supabase()
-    student = find_student_auth_record_by_email(database, email)
-    if not student:
-        raise HTTPException(status_code=403, detail="This account is not linked to a student.")
-    if not student_auth_is_allowed(student["index_number"]):
-        raise HTTPException(status_code=403, detail="The site is currently under maintenance.")
-    current_owner = student.get("auth_user_id")
-    if current_owner is None:
-        database.table("students").update({"auth_user_id": user_id}).eq(
-            "index_number", student["index_number"]
-        ).is_("auth_user_id", "null").execute()
-        student = find_student_auth_record_by_email(database, email)
-        current_owner = student.get("auth_user_id") if student else None
-    if str(current_owner) != user_id:
-        raise HTTPException(status_code=409, detail="This student account is already linked.")
-    return {
-        "index_number": student["index_number"],
-        "name": student["name"],
-        "auth_user_id": user_id,
-        "access_mode": "editable",
-    }
-
-
-def student_from_supabase_token(access_token: str) -> dict[str, Any]:
-    try:
-        user_response = get_supabase().auth.get_user(access_token)
-        user = user_response.user if user_response else None
-        email = getattr(user, "email", None)
-        user_id = str(getattr(user, "id", ""))
-        if not user or not isinstance(email, str) or not user_id:
-            raise HTTPException(status_code=401, detail="Student authentication is required.")
-        return bind_authenticated_student(email, user_id)
-    except HTTPException:
-        raise
-    except Exception as error:
-        raise HTTPException(status_code=401, detail="Student authentication is required.") from error
-
-
-def require_student(
-    credentials: HTTPAuthorizationCredentials | None = Depends(student_bearer),
-) -> dict[str, Any]:
-    if not credentials or credentials.scheme.lower() != "bearer":
-        raise HTTPException(status_code=401, detail="Student authentication is required.")
-    return student_from_supabase_token(credentials.credentials)
-
-
 def require_student_access(
     credentials: HTTPAuthorizationCredentials | None = Depends(student_bearer),
 ) -> dict[str, Any]:
     if not credentials or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Student authentication is required.")
-    token = credentials.credentials
-    if token.startswith("read."):
-        payload = verify_signed_token(token, "read")
-        index_number = normalize_index_number(payload["sub"])
-        student = find_student_auth_record_by_index(get_supabase(), index_number)
-        if not student:
-            raise HTTPException(status_code=401, detail="Student authentication is required.")
-        return {
-            "index_number": student["index_number"],
-            "name": student["name"],
-            "access_mode": "read-only",
-        }
-    return student_from_supabase_token(token)
+    payload = verify_signed_token(credentials.credentials, "read")
+    index_number = normalize_index_number(payload["sub"])
+    student = find_student_auth_record_by_index(get_supabase(), index_number)
+    if not student:
+        raise HTTPException(status_code=401, detail="Student authentication is required.")
+    return {
+        "index_number": student["index_number"],
+        "name": student["name"],
+        "access_mode": "read-only",
+    }
 
 
 def require_admin(
@@ -1229,106 +1058,12 @@ def calculate_cohort_coverage(total_students: int) -> float:
     return round(min(100, total_students / TOTAL_COHORT * 100), 1)
 
 
-@app.post("/api/student/auth/magic-link", status_code=status.HTTP_202_ACCEPTED)
-def send_student_magic_link(
-    submitted: StudentMagicLinkInput,
-    request: Request,
-) -> dict[str, str]:
-    remote_ip = request_ip(request)
-    verify_turnstile(submitted.turnstile_token, remote_ip)
-    index_number = normalize_index_number(submitted.index_number)
-    generic_response = {"status": "accepted", "message": GENERIC_MAGIC_LINK_MESSAGE}
-
-    if not student_auth_is_allowed(index_number):
-        return generic_response
-
-    try:
-        database = get_supabase()
-        request_id = reserve_auth_request(database, index_number, remote_ip, "magic_link")
-        student = find_student_auth_record_by_index(database, index_number)
-        email = student.get("email") if student else None
-        if not isinstance(email, str) or not email.strip():
-            return generic_response
-
-        redirect_url = os.environ.get("FRONTEND_AUTH_CALLBACK_URL")
-        if not redirect_url:
-            raise RuntimeError("FRONTEND_AUTH_CALLBACK_URL must be configured.")
-        get_supabase_auth().auth.sign_in_with_otp({
-            "email": email.strip(),
-            "options": {
-                "email_redirect_to": redirect_url,
-                "should_create_user": True,
-            },
-        })
-        set_auth_request_outcome(database, request_id, "sent")
-        return generic_response
-    except HTTPException:
-        raise
-    except Exception as error:
-        # Do not let SMTP/configuration failures reveal whether an index has an email.
-        logger.warning(
-            "A student magic-link request could not be completed; error_type=%s",
-            type(error).__name__,
-        )
-        return generic_response
-
-
-@app.post("/api/student/auth/password")
-def sign_in_student_with_password(
-    submitted: StudentPasswordInput,
-    request: Request,
-) -> dict[str, Any]:
-    remote_ip = request_ip(request)
-    verify_turnstile(submitted.turnstile_token, remote_ip)
-    index_number = normalize_index_number(submitted.index_number)
-    invalid_credentials = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid index number or personal password.",
-    )
-    if not student_auth_is_allowed(index_number):
-        raise invalid_credentials
-
-    try:
-        database = get_supabase()
-        request_id = reserve_auth_request(database, index_number, remote_ip, "password")
-        student = find_student_auth_record_by_index(database, index_number)
-        email = student.get("email") if student else None
-        if not isinstance(email, str) or not email.strip():
-            raise invalid_credentials
-
-        try:
-            auth_response = get_supabase_auth().auth.sign_in_with_password({
-                "email": email.strip(),
-                "password": submitted.password,
-            })
-        except Exception:
-            raise invalid_credentials
-        session = auth_response.session
-        if not session:
-            raise invalid_credentials
-        set_auth_request_outcome(database, request_id, "success")
-        return {
-            "access_token": session.access_token,
-            "refresh_token": session.refresh_token,
-            "expires_at": session.expires_at,
-            "token_type": session.token_type,
-        }
-    except HTTPException:
-        raise
-    except Exception as error:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Unable to sign in. Please try again.",
-        ) from error
-
-
 @app.post("/api/student/auth/login")
 def sign_in_student(
     submitted: StudentLoginInput,
     request: Request,
 ) -> dict[str, Any]:
     remote_ip = request_ip(request)
-    verify_turnstile(submitted.turnstile_token, remote_ip)
     index_number = normalize_index_number(submitted.index_number)
     invalid_credentials = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1338,47 +1073,19 @@ def sign_in_student(
         database = get_supabase()
         request_id = reserve_auth_request(database, index_number, remote_ip, "login")
         student = find_student_auth_record_by_index(database, index_number)
-        if not student:
-            raise invalid_credentials
-
         shared_password = os.environ.get("STUDENT_READONLY_PASSWORD")
-        if shared_password and secrets.compare_digest(submitted.password, shared_password):
-            set_auth_request_outcome(database, request_id, "success")
-            return {
-                "access_mode": "read-only",
-                "read_token": issue_signed_token("read", index_number, 30 * 60),
-                "index_number": student["index_number"],
-                "name": student["name"],
-            }
-
-        if not student_auth_is_allowed(index_number):
-            raise invalid_credentials
-
-        email = student.get("email")
-        if not isinstance(email, str) or not email.strip():
-            raise invalid_credentials
-        try:
-            auth_response = get_supabase_auth().auth.sign_in_with_password({
-                "email": email.strip(),
-                "password": submitted.password,
-            })
-        except Exception:
-            raise invalid_credentials
-        auth_session = auth_response.session
-        if not auth_session:
-            raise invalid_credentials
-        identity = student_from_supabase_token(auth_session.access_token)
-        if identity["index_number"] != index_number:
+        if (
+            not student
+            or not shared_password
+            or not secrets.compare_digest(submitted.password, shared_password)
+        ):
             raise invalid_credentials
         set_auth_request_outcome(database, request_id, "success")
         return {
-            "access_mode": "editable",
-            "access_token": auth_session.access_token,
-            "refresh_token": auth_session.refresh_token,
-            "expires_at": auth_session.expires_at,
-            "token_type": auth_session.token_type,
-            "index_number": identity["index_number"],
-            "name": identity["name"],
+            "access_mode": "read-only",
+            "read_token": issue_signed_token("read", index_number, 30 * 60),
+            "index_number": student["index_number"],
+            "name": student["name"],
         }
     except HTTPException:
         raise
@@ -1388,16 +1095,6 @@ def sign_in_student(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Unable to sign in. Please try again.",
         ) from error
-
-
-@app.get("/api/student/auth/me")
-def get_authenticated_student(
-    student: dict[str, Any] = Depends(require_student_access),
-) -> dict[str, str]:
-    return {
-        "index_number": student["index_number"],
-        "name": student["name"],
-    }
 
 
 @app.get("/api/student/record")
@@ -1537,7 +1234,6 @@ def get_department_gpas(
 @app.post("/api/admin/login")
 def admin_login(submitted: AdminLoginInput, request: Request) -> dict[str, str]:
     remote_ip = request_ip(request)
-    verify_turnstile(submitted.turnstile_token, remote_ip, "admin-auth")
     expected_username = os.environ.get("ADMIN_USERNAME")
     expected_password = os.environ.get("ADMIN_PASSWORD")
     try:
@@ -1709,63 +1405,12 @@ def update_admin_student_grades(
 
 @app.post("/api/correction-requests", status_code=status.HTTP_201_CREATED)
 def create_correction_request(
-    submitted: CorrectionRequestInput,
-    student: dict[str, Any] = Depends(require_student),
+    _: CorrectionRequestInput,
 ) -> dict[str, Any]:
-    module = submitted.module.strip().lower()
-    grade = submitted.requested_grade.strip().upper()
-    index_number = student["index_number"]
-    if module not in CORRECTABLE_MODULES or grade not in GRADE_VALUES:
-        raise HTTPException(status_code=422, detail="Invalid module or requested grade.")
-
-    try:
-        database = get_supabase()
-        result = (
-            database.table("student_results")
-            .select(f"index_number,{module}")
-            .eq("index_number", index_number)
-            .maybe_single()
-            .execute()
-        )
-        if not result.data:
-            raise HTTPException(status_code=404, detail="Student results were not found.")
-
-        existing = (
-            database.table("grade_correction_requests")
-            .select("id")
-            .eq("index_number", index_number)
-            .eq("module", module)
-            .eq("status", "pending")
-            .execute()
-        )
-        if existing.data:
-            raise HTTPException(status_code=409, detail="A pending request already exists for this module.")
-
-        payload = {
-            "index_number": index_number,
-            "module": module,
-            "current_grade": grade_label(result.data.get(module)),
-            "requested_grade": grade,
-            "status": "pending",
-        }
-        try:
-            created = database.table("grade_correction_requests").insert(payload).execute()
-        except Exception as error:
-            # Compatibility with the old numeric current_grade column until migration.
-            if not is_legacy_numeric_grade_error(error):
-                raise
-            payload["current_grade"] = result.data.get(module)
-            created = database.table("grade_correction_requests").insert(payload).execute()
-        created_request = dict(created.data[0]) if created.data else None
-        if created_request:
-            created_request["current_grade"] = normalize_grade_label(
-                created_request.get("current_grade")
-            )
-        return {"status": "success", "request": created_request}
-    except HTTPException:
-        raise
-    except Exception as error:
-        raise internal_server_exception(error) from error
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Grade correction requests are currently under work. Please try again later.",
+    )
 
 
 @app.get("/api/admin/correction-requests")

@@ -1,23 +1,21 @@
-import { supabase } from './supabase';
-
-let readToken: string | null = null;
+const READ_TOKEN_KEY = 'field-selection-read-token';
 
 export function saveStudentReadToken(token: string): void {
-  readToken = token;
+  if (typeof sessionStorage === 'undefined') return;
+  sessionStorage.setItem(READ_TOKEN_KEY, token);
 }
 
 export function getStudentReadToken(): string | null {
-  return readToken;
+  if (typeof sessionStorage === 'undefined') return null;
+  return sessionStorage.getItem(READ_TOKEN_KEY);
 }
 
 export function clearStudentReadToken(): void {
-  readToken = null;
+  if (typeof sessionStorage === 'undefined') return;
+  sessionStorage.removeItem(READ_TOKEN_KEY);
 }
 
 export async function getStudentApiToken(): Promise<string> {
-  const sessionResponse = await supabase.auth.getSession();
-  const accessToken = sessionResponse.data.session?.access_token;
-  if (!sessionResponse.error && accessToken) return accessToken;
   const readToken = getStudentReadToken();
   if (readToken) return readToken;
   throw new Error('Your secure session has expired. Please log in again.');
