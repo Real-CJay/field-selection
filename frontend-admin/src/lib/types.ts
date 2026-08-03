@@ -206,3 +206,19 @@ export interface AdminDepartmentRecord {
   incomplete: boolean;
   students: AdminDepartmentStudent[];
 }
+
+export interface AdminDepartmentSummary {
+  total_students_processed: number;
+  total_cohort: number;
+  coverage_percentage: number;
+  coverage_band: 'Very Low' | 'Low' | 'Medium' | 'Average' | 'High' | 'Very High';
+  total_capacity: number;
+  selected_min: number;
+  selected_max: number;
+  coverage_note: string;
+}
+
+export interface AdminDepartmentResponse {
+  departments: AdminDepartmentRecord[];
+  summary: AdminDepartmentSummary;
+}

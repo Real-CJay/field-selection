@@ -16,7 +16,7 @@
   import { clearStudentApiSession, getStudentApiSession } from '$lib/student-api-session';
   import { studentRepository } from '$lib/student-repository';
   import { CORRECTION_REQUESTS_UNAVAILABLE } from '$lib/student-write-status';
-  import { getStudentWritesEnabled, isStudentWriteAuthError, submitStudentCorrection } from '$lib/student-write-client';
+  import { getStudentWriteStatus, isStudentWriteAuthError, submitStudentCorrection } from '$lib/student-write-client';
   import type {
     AllocationResult,
     StudentResults,
@@ -43,6 +43,7 @@
   let requestedGrade = $state<ModuleGrade | ''>('');
   let correctionMessage = $state('');
   let authModalOpen = $state(false);
+  let hasPersonalPassword = $state(false);
   let correctionSending = $state(false);
 
   onMount(async () => {
@@ -99,6 +100,7 @@
       requestedGrade = '';
     } catch (error) {
       if (isStudentWriteAuthError(error)) {
+        hasPersonalPassword = true;
         authModalOpen = true;
         session = session ? { ...session, accessMode: 'read-only' } : session;
         return;
@@ -117,10 +119,12 @@
       return;
     }
     try {
-      if (!await getStudentWritesEnabled()) {
+      const writeStatus = await getStudentWriteStatus();
+      if (!writeStatus.enabled) {
         correctionMessage = CORRECTION_REQUESTS_UNAVAILABLE;
         return;
       }
+      hasPersonalPassword = writeStatus.personalPasswordSet;
     } catch (error) {
       correctionMessage = error instanceof Error ? error.message : 'Please log in again.';
       return;
@@ -220,6 +224,7 @@
   <StudentCredentialModal
     open={authModalOpen}
     indexNumber={session.indexNumber}
+    {hasPersonalPassword}
     onAuthenticated={sendAfterAuthentication}
     onCancel={() => { authModalOpen = false; }}
   />

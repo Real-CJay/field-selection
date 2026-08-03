@@ -17,7 +17,7 @@
   import { clearStudentApiSession, getStudentApiSession } from '$lib/student-api-session';
   import { studentRepository } from '$lib/student-repository';
   import {
-    getStudentWritesEnabled,
+    getStudentWriteStatus,
     isStudentWriteAuthError,
     saveStudentPreferences
   } from '$lib/student-write-client';
@@ -31,6 +31,7 @@
   let loading = $state(true);
   let errorMessage = $state('');
   let authModalOpen = $state(false);
+  let hasPersonalPassword = $state(false);
   let saving = $state(false);
 
   let usedRanks = $derived(
@@ -74,6 +75,7 @@
       await goto('/results');
     } catch (error) {
       if (isStudentWriteAuthError(error)) {
+        hasPersonalPassword = true;
         authModalOpen = true;
         session = session ? { ...session, accessMode: 'read-only' } : session;
         return;
@@ -96,10 +98,12 @@
       return;
     }
     try {
-      if (!await getStudentWritesEnabled()) {
+      const writeStatus = await getStudentWriteStatus();
+      if (!writeStatus.enabled) {
         errorMessage = PREFERENCE_EDITING_UNAVAILABLE;
         return;
       }
+      hasPersonalPassword = writeStatus.personalPasswordSet;
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : 'Please log in again.';
       return;
@@ -190,6 +194,7 @@
   <StudentCredentialModal
     open={authModalOpen}
     indexNumber={session.indexNumber}
+    {hasPersonalPassword}
     onAuthenticated={saveAfterAuthentication}
     onCancel={() => { authModalOpen = false; }}
   />

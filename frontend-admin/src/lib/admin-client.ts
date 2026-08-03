@@ -1,5 +1,12 @@
 import { env } from '$env/dynamic/public';
-import type { AdminDepartmentRecord, AdminStudentRecord, ModuleGrade } from './types';
+import type { AdminDepartmentResponse, AdminStudentRecord, ModuleGrade } from './types';
+
+export type AdminReportKind = 'student-rankings' | 'department-summary';
+
+export interface AdminReportDownload {
+  blob: Blob;
+  filename: string;
+}
 
 function baseUrl(): string {
   const value = env.PUBLIC_API_BASE_URL?.replace(/\/+$/, '');
@@ -47,12 +54,29 @@ export async function getAdminStudents(
 export async function getAdminDepartments(
   token: string,
   fetcher: typeof fetch = fetch
-): Promise<AdminDepartmentRecord[]> {
+): Promise<AdminDepartmentResponse> {
   const response = await fetcher(`${baseUrl()}/api/admin/departments`, {
     headers: headers(token)
   });
   if (!response.ok) throw new Error(await message(response));
-  return (await response.json()).departments;
+  return await response.json();
+}
+
+export async function getAdminReport(
+  kind: AdminReportKind,
+  token: string,
+  fetcher: typeof fetch = fetch
+): Promise<AdminReportDownload> {
+  const response = await fetcher(`${baseUrl()}/api/admin/reports/${kind}.csv`, {
+    headers: headers(token)
+  });
+  if (!response.ok) throw new Error(await message(response));
+  const fallback = kind === 'student-rankings'
+    ? 'field-selection-student-rankings.csv'
+    : 'field-selection-department-summary.csv';
+  const matched = response.headers.get('Content-Disposition')?.match(/filename="?([^";]+)"?/i);
+  const filename = (matched?.[1] ?? fallback).replace(/[^a-zA-Z0-9._-]/g, '_');
+  return { blob: await response.blob(), filename };
 }
 
 export async function updateAdminGrades(

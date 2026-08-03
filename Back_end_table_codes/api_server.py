@@ -3,11 +3,13 @@ from __future__ import annotations
 import base64
 import binascii
 from collections import defaultdict
+import csv
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
+import io
 from itertools import combinations
 import json
 import logging
@@ -77,6 +79,19 @@ BASE_QUOTAS = {
     "material": 45,
     "aeronautical": 10,
     "mechatronics": 10,
+}
+
+DEPARTMENT_NAMES = {
+    "biomedical": "Biomedical Engineering",
+    "chemical": "Chemical Engineering",
+    "civil": "Civil Engineering",
+    "computer": "Computer Science and Engineering",
+    "electrical": "Electrical Engineering",
+    "electronic": "Electronic and Telecommunication Engineering",
+    "mechanical": "Mechanical Engineering",
+    "material": "Materials Science and Engineering",
+    "aeronautical": "Aeronautical Engineering",
+    "mechatronics": "Mechatronics Engineering",
 }
 
 TIEBREAKER_RULES = {
@@ -1108,6 +1123,207 @@ def aggregate_admin_departments(
     return departments
 
 
+def coverage_band(coverage_percentage: float) -> str:
+    if coverage_percentage < 60:
+        return "Very Low"
+    if coverage_percentage < 70:
+        return "Low"
+    if coverage_percentage < 80:
+        return "Medium"
+    if coverage_percentage < 90:
+        return "Average"
+    if coverage_percentage < 95:
+        return "High"
+    return "Very High"
+
+
+def admin_department_summary(
+    states: list[AllocationState],
+    students: list[dict[str, Any]],
+    departments: list[dict[str, Any]],
+) -> dict[str, Any]:
+    assigned_totals = [
+        sum(assigned is not None for _, assigned in state.assignments)
+        for state in states
+    ]
+    coverage_percentage = calculate_cohort_coverage(len(students))
+    return {
+        "total_students_processed": len(students),
+        "total_cohort": TOTAL_COHORT,
+        "coverage_percentage": coverage_percentage,
+        "coverage_band": coverage_band(coverage_percentage),
+        "total_capacity": sum(item["quota"] for item in departments),
+        "selected_min": min(assigned_totals, default=0),
+        "selected_max": max(assigned_totals, default=0),
+        "coverage_note": "Cohort coverage is not prediction accuracy.",
+    }
+
+
+def report_cutoff_values(cutoff: dict[str, Any]) -> tuple[str, str, str]:
+    if cutoff["status"] == "open":
+        return "Open", "", ""
+    if cutoff["status"] == "fixed":
+        value = float(cutoff["value"])
+        return f"{value:.2f}", f"{value:.2f}", f"{value:.2f}"
+    lower = float(cutoff["min"])
+    upper = float(cutoff["max"])
+    display = f"{lower:.2f}-{upper:.2f}"
+    if cutoff.get("open_possible"):
+        display = f"Open or {display}"
+    return display, f"{lower:.2f}", f"{upper:.2f}"
+
+
+def csv_safe(value: Any) -> Any:
+    if isinstance(value, str):
+        candidate = value.lstrip(" \t\r\n")
+        if candidate.startswith(("=", "+", "-", "@")):
+            return f"'{value}"
+    return value
+
+
+def csv_download(filename_prefix: str, rows: list[list[Any]]) -> Response:
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\r\n")
+    writer.writerows([[csv_safe(value) for value in row] for row in rows])
+    dated_filename = f"{filename_prefix}-{datetime.now(timezone.utc):%Y-%m-%d}.csv"
+    return Response(
+        content="\ufeff" + output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{dated_filename}"'},
+    )
+
+
+def detailed_department_report_rows(
+    departments: list[dict[str, Any]],
+    students: list[dict[str, Any]],
+) -> list[list[Any]]:
+    students_by_index = {student["index"]: student for student in students}
+    rows: list[list[Any]] = [[
+        "Department",
+        "Department rank",
+        "Index number",
+        "Student name",
+        "Average GPA",
+        "Field-selection GPA",
+        "Preference rank",
+        "Full preference order",
+        "CSE grade",
+        "Mathematics grade",
+        "Electrical grade",
+        "Fluid Mechanics grade",
+        "Mechanics grade",
+        "Material Science grade",
+        "Selection status",
+        "Selected valid outcomes",
+        "Total valid outcomes",
+        "Department quota",
+        "Selected minimum",
+        "Selected maximum",
+        "Cut-off",
+        "Tie-break modules",
+        "Weighted tie-break score",
+        "Candidates at cut-off GPA",
+        "Tie-break score remains tied",
+    ]]
+    for department in departments:
+        cutoff_display, _, _ = report_cutoff_values(department["cutoff"])
+        for rank, member in enumerate(department["students"], start=1):
+            source = students_by_index[member["index_number"]]
+            preference_rank = source["preferences"].index(department["department"]) + 1
+            tiebreaker = member["tiebreaker"]
+            tie_modules = ""
+            tie_score: Any = ""
+            candidate_count: Any = ""
+            score_tied: Any = ""
+            if tiebreaker:
+                tie_modules = " | ".join(
+                    f'{subject["subject"]}: {subject["grade"]} ({subject["value"]:.1f})'
+                    for subject in tiebreaker["subjects"]
+                )
+                tie_score = f'{tiebreaker["score"]:.4f}'
+                candidate_count = tiebreaker["candidate_count"]
+                score_tied = "Yes" if tiebreaker["score_tied"] else "No"
+            rows.append([
+                DEPARTMENT_NAMES[department["department"]],
+                rank,
+                member["index_number"],
+                member["name"],
+                f'{member["average_gpa"]:.4f}',
+                f'{member["allocation_gpa"]:.2f}',
+                preference_rank,
+                " > ".join(
+                    DEPARTMENT_NAMES[preference]
+                    for preference in source["preferences"]
+                ),
+                *[
+                    f'{grade_label(source[subject])} ({float(source[subject]):.1f})'
+                    for subject in (
+                        "cse", "maths", "electrical", "fluids", "mechanics", "material"
+                    )
+                ],
+                "Selected" if member["selection_status"] == "selected" else "Border outcome",
+                member["selected_state_count"],
+                member["total_states"],
+                department["quota"],
+                department["selected_min"],
+                department["selected_max"],
+                cutoff_display,
+                tie_modules,
+                tie_score,
+                candidate_count,
+                score_tied,
+            ])
+    return rows
+
+
+def department_summary_report_rows(
+    departments: list[dict[str, Any]],
+    summary: dict[str, Any],
+) -> list[list[Any]]:
+    rows: list[list[Any]] = [[
+        "Department",
+        "Cut-off status",
+        "Cut-off",
+        "Cut-off lower boundary",
+        "Cut-off upper boundary",
+        "Seats filled minimum",
+        "Seats filled maximum",
+        "Seat quota",
+        "Fill percentage minimum",
+        "Fill percentage maximum",
+        "Eligible students processed",
+        "Cohort denominator",
+        "Cohort coverage percentage",
+        "Coverage band",
+        "Allocation incomplete",
+        "Coverage note",
+    ]]
+    for department in departments:
+        cutoff_display, cutoff_lower, cutoff_upper = report_cutoff_values(
+            department["cutoff"]
+        )
+        quota = department["quota"]
+        rows.append([
+            DEPARTMENT_NAMES[department["department"]],
+            department["cutoff"]["status"].title(),
+            cutoff_display,
+            cutoff_lower,
+            cutoff_upper,
+            department["selected_min"],
+            department["selected_max"],
+            quota,
+            f'{department["selected_min"] / quota * 100:.1f}',
+            f'{department["selected_max"] / quota * 100:.1f}',
+            summary["total_students_processed"],
+            summary["total_cohort"],
+            f'{summary["coverage_percentage"]:.1f}',
+            summary["coverage_band"],
+            "Yes" if department["incomplete"] else "No",
+            summary["coverage_note"],
+        ])
+    return rows
+
+
 def parse_lookup_gpa(value: str) -> Decimal:
     if not re.fullmatch(r"(?:[0-3]\.\d{2}|4\.00)", value):
         raise HTTPException(
@@ -1405,9 +1621,17 @@ def get_authenticated_student(
 
 @app.get("/api/student/writes/status")
 def get_student_write_status(
-    _: dict[str, Any] = Depends(require_student_access),
+    student: dict[str, Any] = Depends(require_student_access),
 ) -> dict[str, bool]:
-    return {"enabled": student_writes_enabled()}
+    credential = find_student_credential(
+        get_supabase(), student["index_number"]
+    )
+    return {
+        "enabled": student_writes_enabled(),
+        "personal_password_set": bool(
+            credential and credential.get("personal_password_hash")
+        ),
+    }
 
 
 @app.get("/api/student/record")
@@ -1649,10 +1873,39 @@ def admin_login(submitted: AdminLoginInput, request: Request) -> dict[str, str]:
 def list_admin_departments(_: str = Depends(require_admin)) -> dict[str, Any]:
     try:
         states, students, overflow_gpa = run_allocation_engine()
+        departments = aggregate_admin_departments(states, students, overflow_gpa)
         return {
             "status": "success",
-            "departments": aggregate_admin_departments(states, students, overflow_gpa),
+            "departments": departments,
+            "summary": admin_department_summary(states, students, departments),
         }
+    except Exception as error:
+        raise internal_server_exception(error) from error
+
+
+@app.get("/api/admin/reports/student-rankings.csv")
+def download_admin_student_rankings(_: str = Depends(require_admin)) -> Response:
+    try:
+        states, students, overflow_gpa = run_allocation_engine()
+        departments = aggregate_admin_departments(states, students, overflow_gpa)
+        return csv_download(
+            "field-selection-student-rankings",
+            detailed_department_report_rows(departments, students),
+        )
+    except Exception as error:
+        raise internal_server_exception(error) from error
+
+
+@app.get("/api/admin/reports/department-summary.csv")
+def download_admin_department_summary(_: str = Depends(require_admin)) -> Response:
+    try:
+        states, students, overflow_gpa = run_allocation_engine()
+        departments = aggregate_admin_departments(states, students, overflow_gpa)
+        summary = admin_department_summary(states, students, departments)
+        return csv_download(
+            "field-selection-department-summary",
+            department_summary_report_rows(departments, summary),
+        )
     except Exception as error:
         raise internal_server_exception(error) from error
 

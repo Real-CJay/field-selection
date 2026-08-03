@@ -20,6 +20,11 @@ export class StudentWriteError extends Error {
   }
 }
 
+export interface StudentWriteStatus {
+  enabled: boolean;
+  personalPasswordSet: boolean;
+}
+
 export function isStudentWriteAuthError(error: unknown): boolean {
   return error instanceof StudentWriteError && (error.status === 401 || error.status === 403);
 }
@@ -51,7 +56,7 @@ async function authorizedRequest<T>(
   return await response.json() as T;
 }
 
-export async function getStudentWritesEnabled(): Promise<boolean> {
+export async function getStudentWriteStatus(): Promise<StudentWriteStatus> {
   const token = await getStudentApiToken();
   const response = await fetch(`${baseUrl()}/api/student/writes/status`, {
     headers: { Authorization: `Bearer ${token}` }
@@ -60,7 +65,11 @@ export async function getStudentWritesEnabled(): Promise<boolean> {
     await errorMessage(response, 'Unable to check student editing availability.'),
     response.status
   );
-  return Boolean((await response.json()).enabled);
+  const result = await response.json();
+  return {
+    enabled: Boolean(result.enabled),
+    personalPasswordSet: Boolean(result.personal_password_set)
+  };
 }
 
 export async function saveStudentPreferences(
