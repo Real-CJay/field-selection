@@ -14,17 +14,24 @@
     open,
     indexNumber,
     initialMode = 'options',
+    hasPersonalPassword = true,
     onAuthenticated,
     onCancel
   }: {
     open: boolean;
     indexNumber: string;
     initialMode?: Mode;
+    hasPersonalPassword?: boolean;
     onAuthenticated: () => void | Promise<void>;
     onCancel: () => void;
   } = $props();
 
   let mode = $state<Mode>('options');
+  let displayMode = $derived<Mode>(
+    mode === 'options'
+      ? (initialMode === 'options' && !hasPersonalPassword ? 'recovery' : initialMode)
+      : mode
+  );
   let personalPassword = $state('');
   let passwordConfirmation = $state('');
   let recoveryCode = $state('');
@@ -35,7 +42,7 @@
 
   $effect(() => {
     if (open && !wasOpen) {
-      mode = initialMode;
+      mode = initialMode === 'options' && !hasPersonalPassword ? 'recovery' : initialMode;
       personalPassword = '';
       passwordConfirmation = '';
       recoveryCode = '';
@@ -114,18 +121,20 @@
   <div class="modal-backdrop" role="presentation">
     <div class="card auth-modal" role="dialog" aria-modal="true" aria-labelledby="student-auth-heading">
       <h2 id="student-auth-heading">
-        {mode === 'create' ? 'Create your personal password' : 'Verify before saving'}
+        {displayMode === 'create' ? 'Create your personal password' : 'Verify before saving'}
       </h2>
 
-      {#if mode === 'options'}
-        <p class="muted">Use your personal password, or use your 16-digit recovery code to create or reset it.</p>
-        <button class="button auth-action" type="button" onclick={() => { mode = 'password'; message = ''; }}>
-          Use personal password
-        </button>
+      {#if displayMode === 'options'}
+        <p class="muted">Use your personal password, or use your 16-digit recovery code to reset it.</p>
+        {#if hasPersonalPassword}
+          <button class="button auth-action" type="button" onclick={() => { mode = 'password'; message = ''; }}>
+            Use personal password
+          </button>
+        {/if}
         <button class="button secondary auth-action" type="button" onclick={() => { mode = 'recovery'; message = ''; }}>
           Use/reset with 16-digit code
         </button>
-      {:else if mode === 'password'}
+      {:else if displayMode === 'password'}
         <div class="field">
           <label for="modal-personal-password">Personal password</label>
           <input class="input" id="modal-personal-password" type="password" bind:value={personalPassword} autocomplete="current-password" />
@@ -136,8 +145,12 @@
         <button class="link-button" type="button" onclick={() => { mode = 'recovery'; message = ''; }}>
           Forgot your personal password?
         </button>
-      {:else if mode === 'recovery'}
-        <p class="muted">Enter the permanent 16-digit recovery code provided to you.</p>
+      {:else if displayMode === 'recovery'}
+        <p class="muted">
+          {hasPersonalPassword
+            ? 'Enter your permanent 16-digit recovery code to reset your personal password.'
+            : 'Enter the permanent 16-digit recovery code provided to you to create your personal password.'}
+        </p>
         <div class="field">
           <label for="student-recovery-code">Recovery code</label>
           <input class="input" id="student-recovery-code" bind:value={recoveryCode} inputmode="numeric" autocomplete="one-time-code" placeholder="1234-5678-9012-3456" />

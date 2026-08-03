@@ -1621,9 +1621,17 @@ def get_authenticated_student(
 
 @app.get("/api/student/writes/status")
 def get_student_write_status(
-    _: dict[str, Any] = Depends(require_student_access),
+    student: dict[str, Any] = Depends(require_student_access),
 ) -> dict[str, bool]:
-    return {"enabled": student_writes_enabled()}
+    credential = find_student_credential(
+        get_supabase(), student["index_number"]
+    )
+    return {
+        "enabled": student_writes_enabled(),
+        "personal_password_set": bool(
+            credential and credential.get("personal_password_hash")
+        ),
+    }
 
 
 @app.get("/api/student/record")

@@ -4,6 +4,7 @@ import ModuleGradesPage from '../routes/module-grades/+page.svelte';
 import PreferencesPage from '../routes/preferences/+page.svelte';
 import ResultsPage from '../routes/results/+page.svelte';
 import AdminPage from '../routes/admin/+page.svelte';
+import StudentCredentialModal from './components/StudentCredentialModal.svelte';
 
 describe('student flow', () => {
   it('renders required Fluid Mechanics and Mechanics grade fields', () => {
@@ -39,5 +40,36 @@ describe('student flow', () => {
     expect(body).toContain('Student full records');
     expect(body).toContain('Recorrection requests');
     expect(body).toContain('Departments');
+  });
+
+  it('shows only the recovery-code path before a personal password exists', () => {
+    const { body } = render(StudentCredentialModal, {
+      props: {
+        open: true,
+        indexNumber: '250544U',
+        hasPersonalPassword: false,
+        onAuthenticated: () => undefined,
+        onCancel: () => undefined
+      }
+    });
+
+    expect(body).toContain('16-digit recovery code');
+    expect(body).toContain('create your personal password');
+    expect(body).not.toContain('Use personal password');
+  });
+
+  it('offers password login and recovery reset after a password exists', () => {
+    const { body } = render(StudentCredentialModal, {
+      props: {
+        open: true,
+        indexNumber: '250544U',
+        hasPersonalPassword: true,
+        onAuthenticated: () => undefined,
+        onCancel: () => undefined
+      }
+    });
+
+    expect(body).toContain('Use personal password');
+    expect(body).toContain('Use/reset with 16-digit code');
   });
 });

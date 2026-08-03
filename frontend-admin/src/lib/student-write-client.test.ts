@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { saveStudentApiSession } from './student-api-session';
-import { isStudentWriteAuthError, saveStudentPreferences } from './student-write-client';
+import {
+  getStudentWriteStatus,
+  isStudentWriteAuthError,
+  saveStudentPreferences
+} from './student-write-client';
 
 function memoryStorage(): Storage {
   const values = new Map<string, string>();
@@ -63,5 +67,21 @@ describe('student write client', () => {
     } catch (error) {
       expect(isStudentWriteAuthError(error)).toBe(true);
     }
+  });
+
+  it('reports write availability without exposing the password hash', async () => {
+    saveStudentApiSession({ accessMode: 'read-only', token: 'read.student-token' });
+    const fetcher = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ enabled: true, personal_password_set: false }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    ));
+    vi.stubGlobal('fetch', fetcher);
+
+    await expect(getStudentWriteStatus()).resolves.toEqual({
+      enabled: true,
+      personalPasswordSet: false
+    });
+    const [, options] = fetcher.mock.calls[0];
+    expect(options.headers.Authorization).toBe('Bearer read.student-token');
   });
 });

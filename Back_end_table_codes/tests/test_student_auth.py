@@ -62,6 +62,33 @@ def test_shared_password_login_returns_only_read_only_identity(monkeypatch):
 
 
 @pytest.mark.parametrize(
+    ("personal_password_hash", "expected"),
+    [(None, False), ("argon2-password-hash", True)],
+)
+def test_write_status_only_reveals_whether_a_personal_password_exists(
+    monkeypatch, personal_password_hash, expected
+):
+    monkeypatch.setenv("STUDENT_WRITES_ENABLED", "true")
+    monkeypatch.setattr(api_server, "get_supabase", lambda: object())
+    monkeypatch.setattr(
+        api_server,
+        "find_student_credential",
+        lambda *_: {
+            "index_number": "250544U",
+            "personal_password_hash": personal_password_hash,
+        },
+    )
+
+    response = api_server.get_student_write_status({"index_number": "250544U"})
+
+    assert response == {
+        "enabled": True,
+        "personal_password_set": expected,
+    }
+    assert "personal_password_hash" not in response
+
+
+@pytest.mark.parametrize(
     ("student", "password"),
     [
         (None, "student123"),
