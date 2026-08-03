@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   clearStudentReadToken,
   getStudentApiToken,
+  getStudentApiSession,
   getStudentReadToken,
   saveStudentReadToken
 } from './student-api-session';
@@ -37,5 +38,15 @@ describe('student API session', () => {
     clearStudentReadToken();
     expect(getStudentReadToken()).toBeNull();
     await expect(getStudentApiToken()).rejects.toThrow('secure session has expired');
+  });
+
+  it('stores editable tokens only in session storage', async () => {
+    const { saveStudentApiSession } = await import('./student-api-session');
+    saveStudentApiSession({ accessMode: 'editable', token: 'edit.signed-token' });
+    expect(getStudentApiSession()).toEqual({
+      accessMode: 'editable',
+      token: 'edit.signed-token'
+    });
+    await expect(getStudentApiToken()).resolves.toBe('edit.signed-token');
   });
 });

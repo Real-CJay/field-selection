@@ -18,7 +18,8 @@ export function getStudentSession(): StudentSession | null {
     }
     return {
       indexNumber: parsed.indexNumber,
-      name: parsed.name
+      name: parsed.name,
+      accessMode: parsed.accessMode === 'editable' ? 'editable' : 'read-only'
     };
   } catch {
     localStorage.removeItem(SESSION_KEY);

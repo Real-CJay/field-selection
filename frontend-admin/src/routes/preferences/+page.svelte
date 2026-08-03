@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
+  import StudentCredentialModal from '$lib/components/StudentCredentialModal.svelte';
   import {
     DEPARTMENTS,
     emptyRankings,
@@ -13,8 +14,13 @@
     getModuleGrades,
     getStudentSession
   } from '$lib/session';
-  import { clearStudentReadToken } from '$lib/student-api-session';
+  import { clearStudentApiSession, getStudentApiSession } from '$lib/student-api-session';
   import { studentRepository } from '$lib/student-repository';
+  import {
+    getStudentWritesEnabled,
+    isStudentWriteAuthError,
+    saveStudentPreferences
+  } from '$lib/student-write-client';
   import { PREFERENCE_EDITING_UNAVAILABLE } from '$lib/student-write-status';
   import type { StudentRankings, StudentSession } from '$lib/types';
 
@@ -24,6 +30,8 @@
   let rankings = $state<StudentRankings>(emptyRankings());
   let loading = $state(true);
   let errorMessage = $state('');
+  let authModalOpen = $state(false);
+  let saving = $state(false);
 
   let usedRanks = $derived(
     new Set(Object.values(rankings).filter((rank): rank is number => typeof rank === 'number'))
@@ -58,19 +66,56 @@
     errorMessage = '';
   }
 
-  function submit(event: SubmitEvent) {
+  async function saveCurrentPreferences() {
+    saving = true;
+    errorMessage = '';
+    try {
+      await saveStudentPreferences(rankings);
+      await goto('/results');
+    } catch (error) {
+      if (isStudentWriteAuthError(error)) {
+        authModalOpen = true;
+        session = session ? { ...session, accessMode: 'read-only' } : session;
+        return;
+      }
+      errorMessage = error instanceof Error ? error.message : 'Unable to save preferences.';
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function submit(event: SubmitEvent) {
     event.preventDefault();
     if (!session) return;
 
     errorMessage = validateRankings(rankings) ?? '';
     if (errorMessage) return;
 
-    errorMessage = PREFERENCE_EDITING_UNAVAILABLE;
+    if (getStudentApiSession()?.accessMode === 'editable') {
+      await saveCurrentPreferences();
+      return;
+    }
+    try {
+      if (!await getStudentWritesEnabled()) {
+        errorMessage = PREFERENCE_EDITING_UNAVAILABLE;
+        return;
+      }
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : 'Please log in again.';
+      return;
+    }
+    authModalOpen = true;
+  }
+
+  async function saveAfterAuthentication() {
+    authModalOpen = false;
+    session = getStudentSession();
+    await saveCurrentPreferences();
   }
 
   async function logout() {
     clearStudentSession();
-    clearStudentReadToken();
+    clearStudentApiSession();
     await goto('/login');
   }
 </script>
@@ -82,7 +127,7 @@
     <div>
       <h1>Field Selection</h1>
       {#if session}
-        <p class="muted">{session.name} · {session.indexNumber}</p>
+        <p class="muted">{session.name} · {session.indexNumber} · <span class="access-badge">{session.accessMode === 'editable' ? 'Editable' : 'Read-only'}</span></p>
       {/if}
     </div>
     <button class="button secondary" type="button" onclick={logout}>Logout</button>
@@ -134,12 +179,21 @@
         {#if errorMessage}
           <div class="message" role="alert">{errorMessage}</div>
         {/if}
-        <button class="button save" type="submit">Save Preferences</button>
+        <button class="button save" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save Preferences'}</button>
       </form>
     {/if}
   </section>
 
 </main>
+
+{#if session}
+  <StudentCredentialModal
+    open={authModalOpen}
+    indexNumber={session.indexNumber}
+    onAuthenticated={saveAfterAuthentication}
+    onCancel={() => { authModalOpen = false; }}
+  />
+{/if}
 
 <style>
   .page-header {
@@ -194,6 +248,8 @@
     margin: 24px 0 0;
     color: #6b7280;
   }
+
+  .access-badge { font-weight: 700; color: #1d4ed8; }
 
   @media (max-width: 520px) {
     .page-header {

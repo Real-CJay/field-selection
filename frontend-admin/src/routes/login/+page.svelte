@@ -2,9 +2,10 @@
   import { goto } from '$app/navigation';
   import { authenticateAdmin } from '$lib/admin-client';
   import { clearAdminSession, setAdminSession } from '$lib/admin-session';
+  import StudentCredentialModal from '$lib/components/StudentCredentialModal.svelte';
   import { getReturningStudentRoute } from '$lib/navigation';
-  import { signInStudent } from '$lib/student-auth-client';
-  import { clearStudentReadToken, saveStudentReadToken } from '$lib/student-api-session';
+  import { signInStudent, tokenFromLogin } from '$lib/student-auth-client';
+  import { clearStudentApiSession, saveStudentApiSession } from '$lib/student-api-session';
   import {
     clearStudentSession,
     saveStudentSession
@@ -15,6 +16,7 @@
   let password = $state('');
   let loading = $state(false);
   let message = $state('');
+  let recoveryModalOpen = $state(false);
   let isAdminUsername = $derived(indexNumber.trim().toLowerCase() === 'cjay');
 
   async function submit(event: SubmitEvent) {
@@ -28,7 +30,7 @@
         const adminUsername = 'CJay';
         const result = await authenticateAdmin(adminUsername, password);
         clearStudentSession();
-        clearStudentReadToken();
+        clearStudentApiSession();
         setAdminSession({ username: result.username, token: result.admin_token });
         await goto('/admin');
       } catch (error) {
@@ -41,12 +43,13 @@
 
     try {
       clearAdminSession();
-      clearStudentReadToken();
+      clearStudentApiSession();
       const login = await signInStudent(normalizedIndex, password);
-      saveStudentReadToken(login.read_token);
+      saveStudentApiSession({ accessMode: login.access_mode, token: tokenFromLogin(login) });
       saveStudentSession({
         indexNumber: login.index_number,
-        name: login.name
+        name: login.name,
+        accessMode: login.access_mode
       });
       try {
         await goto(await getReturningStudentRoute(
@@ -58,11 +61,35 @@
         await goto('/module-grades');
       }
     } catch (error) {
-      clearStudentReadToken();
+      clearStudentApiSession();
       clearStudentSession();
       message = error instanceof Error ? error.message : 'Unable to sign in. Please try again.';
     } finally {
       loading = false;
+    }
+  }
+
+  function openRecoveryModal() {
+    if (isAdminUsername) return;
+    if (!indexNumber.trim()) {
+      message = 'Enter your student index number first.';
+      return;
+    }
+    message = '';
+    recoveryModalOpen = true;
+  }
+
+  async function continueAfterRecovery() {
+    recoveryModalOpen = false;
+    const normalizedIndex = indexNumber.trim().toUpperCase();
+    try {
+      await goto(await getReturningStudentRoute(
+        normalizedIndex,
+        studentRepository.getResults,
+        studentRepository.getPreferences
+      ));
+    } catch {
+      await goto('/module-grades');
     }
   }
 </script>
@@ -105,9 +132,20 @@
       <button class="button submit" type="submit" disabled={loading}>
         {loading ? 'Logging in…' : 'Login'}
       </button>
+      {#if !isAdminUsername}
+        <button class="forgot" type="button" onclick={openRecoveryModal}>Forgot personal password?</button>
+      {/if}
     </form>
   </section>
 </main>
+
+<StudentCredentialModal
+  open={recoveryModalOpen}
+  indexNumber={indexNumber.trim().toUpperCase()}
+  initialMode="recovery"
+  onAuthenticated={continueAfterRecovery}
+  onCancel={() => { recoveryModalOpen = false; }}
+/>
 
 <style>
   .login-page {
@@ -124,5 +162,15 @@
   .submit {
     width: 100%;
     margin-top: 24px;
+  }
+
+  .forgot {
+    width: 100%;
+    margin-top: 16px;
+    border: 0;
+    background: transparent;
+    color: #1d4ed8;
+    cursor: pointer;
+    text-decoration: underline;
   }
 </style>

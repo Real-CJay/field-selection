@@ -5,7 +5,7 @@ import binascii
 from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 from itertools import combinations
@@ -18,6 +18,8 @@ import secrets
 import time
 from typing import Any
 
+from argon2 import PasswordHasher, Type
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Path, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,7 +50,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=frontend_origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH"],
+    allow_methods=["GET", "POST", "PUT", "PATCH"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -103,6 +105,7 @@ DISPLAY_GPA_PRECISION = Decimal("0.0001")
 ALLOCATION_GPA_PRECISION = Decimal("0.01")
 TOTAL_COHORT = 743
 DEFAULT_ALLOCATION_STATE_LIMIT = 10_000
+CORRECTABLE_MODULES = {"cse", "maths", "electrical", "material"}
 GRADE_VALUES = {
     "A+": 4.0, "A": 4.0, "A-": 3.7, "B+": 3.3, "B": 3.0, "B-": 2.7,
     "C+": 2.3, "C": 2.0, "C-": 1.7, "D": 1.0, "F": 0.0,
@@ -112,6 +115,15 @@ GRADE_LABELS = {
     2.3: "C+", 2.0: "C", 1.7: "C-", 1.0: "D", 0.0: "F",
 }
 GRADE_LABEL_VALUES = set(GRADE_LABELS.values())
+PASSWORD_HASHER = PasswordHasher(
+    time_cost=2,
+    memory_cost=19_456,
+    parallelism=1,
+    hash_len=32,
+    salt_len=16,
+    type=Type.ID,
+)
+DUMMY_CREDENTIAL_HASH = PASSWORD_HASHER.hash("field-selection-dummy-credential")
 student_bearer = HTTPBearer(auto_error=False)
 admin_bearer = HTTPBearer(auto_error=False)
 
@@ -140,6 +152,35 @@ class CorrectionRequestInput(BaseModel):
 class StudentLoginInput(BaseModel):
     index_number: str = Field(min_length=1, max_length=32)
     password: str = Field(min_length=1, max_length=256)
+
+
+class StudentRecoveryVerifyInput(BaseModel):
+    index_number: str = Field(min_length=1, max_length=32)
+    recovery_code: str = Field(min_length=1, max_length=64)
+
+
+class StudentPasswordSetupInput(BaseModel):
+    password_setup_token: str = Field(min_length=32, max_length=512)
+    password: str = Field(min_length=1, max_length=256)
+    password_confirmation: str = Field(min_length=1, max_length=256)
+
+
+class StudentPreferencesUpdateInput(BaseModel):
+    biomedical: int = Field(ge=1, le=10)
+    chemical: int = Field(ge=1, le=10)
+    civil: int = Field(ge=1, le=10)
+    computer: int = Field(ge=1, le=10)
+    electrical: int = Field(ge=1, le=10)
+    electronic: int = Field(ge=1, le=10)
+    mechanical: int = Field(ge=1, le=10)
+    material: int = Field(ge=1, le=10)
+    aeronautical: int = Field(ge=1, le=10)
+    mechatronics: int = Field(ge=1, le=10)
+
+
+class StudentGradeUpdateInput(BaseModel):
+    fluids: str
+    mechanics: str
 
 
 class AdminLoginInput(BaseModel):
@@ -187,6 +228,11 @@ def grade_value_from_label(value: Any) -> float:
 def is_legacy_status_constraint_error(error: Exception) -> bool:
     detail = str(error).lower()
     return "23514" in detail and "status" in detail
+
+
+def is_legacy_numeric_grade_error(error: Exception) -> bool:
+    detail = str(error).lower()
+    return "22p02" in detail or "invalid input syntax for type numeric" in detail
 
 
 def as_decimal(value: Any) -> Decimal:
@@ -485,6 +531,53 @@ def normalize_index_number(value: str) -> str:
     return value.strip().upper()
 
 
+def credential_pepper() -> str:
+    pepper = os.environ.get("STUDENT_CREDENTIAL_PEPPER")
+    if not pepper or len(pepper) < 32:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Student credential authentication is not configured.",
+        )
+    return pepper
+
+
+def credential_material(value: str) -> str:
+    return hmac.new(
+        credential_pepper().encode("utf-8"),
+        value.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def hash_credential(value: str) -> str:
+    return PASSWORD_HASHER.hash(credential_material(value))
+
+
+def verify_credential(stored_hash: str | None, value: str) -> bool:
+    candidate_hash = stored_hash or DUMMY_CREDENTIAL_HASH
+    try:
+        return bool(PASSWORD_HASHER.verify(candidate_hash, credential_material(value)))
+    except (InvalidHashError, VerificationError, VerifyMismatchError):
+        return False
+
+
+def hash_password_setup_token(token: str) -> str:
+    return hmac.new(
+        credential_pepper().encode("utf-8"),
+        f"setup:{token}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def normalize_recovery_code(value: str) -> str | None:
+    normalized = value.replace("-", "").replace(" ", "")
+    return normalized if len(normalized) == 16 and normalized.isascii() and normalized.isdigit() else None
+
+
+def student_writes_enabled() -> bool:
+    return os.environ.get("STUDENT_WRITES_ENABLED", "false").lower() == "true"
+
+
 def _urlsafe_encode(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
 
@@ -499,9 +592,14 @@ def _urlsafe_decode(value: str) -> bytes:
 
 
 def signed_token_secret(token_type: str) -> str:
-    variable = (
-        "ADMIN_TOKEN_SECRET" if token_type == "admin" else "STUDENT_READ_TOKEN_SECRET"
-    )
+    variables = {
+        "admin": "ADMIN_TOKEN_SECRET",
+        "read": "STUDENT_READ_TOKEN_SECRET",
+        "edit": "STUDENT_EDIT_TOKEN_SECRET",
+    }
+    variable = variables.get(token_type)
+    if not variable:
+        raise HTTPException(status_code=401, detail="Invalid authentication token.")
     secret = os.environ.get(variable)
     if not secret or len(secret) < 32:
         raise HTTPException(
@@ -511,7 +609,12 @@ def signed_token_secret(token_type: str) -> str:
     return secret
 
 
-def issue_signed_token(token_type: str, subject: str, lifetime_seconds: int) -> str:
+def issue_signed_token(
+    token_type: str,
+    subject: str,
+    lifetime_seconds: int,
+    extra_claims: dict[str, Any] | None = None,
+) -> str:
     current_time = int(time.time())
     payload = {
         "typ": token_type,
@@ -520,6 +623,8 @@ def issue_signed_token(token_type: str, subject: str, lifetime_seconds: int) -> 
         "exp": current_time + lifetime_seconds,
         "nonce": secrets.token_urlsafe(12),
     }
+    if extra_claims:
+        payload.update(extra_claims)
     encoded_payload = _urlsafe_encode(
         json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     )
@@ -638,21 +743,70 @@ def find_student_auth_record_by_index(
     return response.data
 
 
-def require_student_access(
-    credentials: HTTPAuthorizationCredentials | None = Depends(student_bearer),
+def find_student_credential(
+    database: Client, index_number: str
+) -> dict[str, Any] | None:
+    response = (
+        database.table("student_credentials")
+        .select(
+            "index_number,recovery_code_hash,personal_password_hash,"
+            "password_version,recovery_version"
+        )
+        .eq("index_number", normalize_index_number(index_number))
+        .maybe_single()
+        .execute()
+    )
+    return response.data
+
+
+def authenticate_student_token(
+    credentials: HTTPAuthorizationCredentials | None,
+    editable_required: bool = False,
 ) -> dict[str, Any]:
     if not credentials or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Student authentication is required.")
-    payload = verify_signed_token(credentials.credentials, "read")
+    token = credentials.credentials
+    token_type = token.split(".", 1)[0]
+    if token_type not in {"read", "edit"}:
+        raise HTTPException(status_code=401, detail="Student authentication is required.")
+    if editable_required and token_type != "edit":
+        raise HTTPException(status_code=403, detail="Editable student authentication is required.")
+    payload = verify_signed_token(token, token_type)
     index_number = normalize_index_number(payload["sub"])
-    student = find_student_auth_record_by_index(get_supabase(), index_number)
+    database = get_supabase()
+    student = find_student_auth_record_by_index(database, index_number)
     if not student:
         raise HTTPException(status_code=401, detail="Student authentication is required.")
+    if token_type == "edit":
+        credential = find_student_credential(database, index_number)
+        if (
+            not credential
+            or not isinstance(payload.get("ver"), int)
+            or payload["ver"] != credential.get("password_version")
+        ):
+            raise HTTPException(status_code=401, detail="Student authentication is required.")
     return {
         "index_number": student["index_number"],
         "name": student["name"],
-        "access_mode": "read-only",
+        "access_mode": "editable" if token_type == "edit" else "read-only",
     }
+
+
+def require_student_access(
+    credentials: HTTPAuthorizationCredentials | None = Depends(student_bearer),
+) -> dict[str, Any]:
+    return authenticate_student_token(credentials)
+
+
+def require_editable_student(
+    credentials: HTTPAuthorizationCredentials | None = Depends(student_bearer),
+) -> dict[str, Any]:
+    if not student_writes_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Student editing is currently under work. Please try again later.",
+        )
+    return authenticate_student_token(credentials, editable_required=True)
 
 
 def require_admin(
@@ -1071,19 +1225,45 @@ def sign_in_student(
     )
     try:
         database = get_supabase()
-        request_id = reserve_auth_request(database, index_number, remote_ip, "login")
-        student = find_student_auth_record_by_index(database, index_number)
         shared_password = os.environ.get("STUDENT_READONLY_PASSWORD")
-        if (
-            not student
-            or not shared_password
-            or not secrets.compare_digest(submitted.password, shared_password)
-        ):
+        is_shared_login = bool(
+            shared_password
+            and secrets.compare_digest(submitted.password, shared_password)
+        )
+        request_id = reserve_auth_request(
+            database,
+            index_number,
+            remote_ip,
+            "login" if is_shared_login else "personal_login",
+        )
+        student = find_student_auth_record_by_index(database, index_number)
+        if is_shared_login:
+            if not student:
+                raise invalid_credentials
+            set_auth_request_outcome(database, request_id, "success")
+            return {
+                "access_mode": "read-only",
+                "read_token": issue_signed_token("read", index_number, 30 * 60),
+                "index_number": student["index_number"],
+                "name": student["name"],
+            }
+
+        credential = find_student_credential(database, index_number) if student else None
+        valid_personal_password = verify_credential(
+            credential.get("personal_password_hash") if credential else None,
+            submitted.password,
+        )
+        if not student or not credential or not valid_personal_password:
             raise invalid_credentials
         set_auth_request_outcome(database, request_id, "success")
         return {
-            "access_mode": "read-only",
-            "read_token": issue_signed_token("read", index_number, 30 * 60),
+            "access_mode": "editable",
+            "edit_token": issue_signed_token(
+                "edit",
+                index_number,
+                30 * 60,
+                {"ver": credential["password_version"]},
+            ),
             "index_number": student["index_number"],
             "name": student["name"],
         }
@@ -1095,6 +1275,139 @@ def sign_in_student(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Unable to sign in. Please try again.",
         ) from error
+
+
+@app.post("/api/student/auth/recovery/verify")
+def verify_student_recovery_code(
+    submitted: StudentRecoveryVerifyInput,
+    request: Request,
+) -> dict[str, Any]:
+    remote_ip = request_ip(request)
+    index_number = normalize_index_number(submitted.index_number)
+    invalid_code = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid index number or recovery code.",
+    )
+    try:
+        database = get_supabase()
+        request_id = reserve_auth_request(
+            database, index_number, remote_ip, "recovery_verify"
+        )
+        normalized_code = normalize_recovery_code(submitted.recovery_code)
+        student = find_student_auth_record_by_index(database, index_number)
+        credential = find_student_credential(database, index_number) if student else None
+        valid_code = verify_credential(
+            credential.get("recovery_code_hash") if credential else None,
+            normalized_code or submitted.recovery_code,
+        )
+        if not normalized_code or not student or not credential or not valid_code:
+            raise invalid_code
+
+        setup_token = secrets.token_urlsafe(32)
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+        database.table("student_password_challenges").insert({
+            "token_hash": hash_password_setup_token(setup_token),
+            "index_number": index_number,
+            "recovery_version": credential["recovery_version"],
+            "expires_at": expires_at.isoformat(),
+        }).execute()
+        set_auth_request_outcome(database, request_id, "success")
+        return {
+            "password_setup_token": setup_token,
+            "expires_in": 10 * 60,
+        }
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.error("Recovery-code verification failed; error_type=%s", type(error).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to verify the recovery code. Please try again.",
+        ) from error
+
+
+@app.post("/api/student/auth/password")
+def create_or_reset_student_password(
+    submitted: StudentPasswordSetupInput,
+    request: Request,
+) -> dict[str, Any]:
+    if submitted.password != submitted.password_confirmation:
+        raise HTTPException(status_code=422, detail="The passwords do not match.")
+    if len(submitted.password) < 6:
+        raise HTTPException(
+            status_code=422,
+            detail="Use at least 6 characters for your personal password.",
+        )
+    shared_password = os.environ.get("STUDENT_READONLY_PASSWORD", "student123")
+    if any(
+        secrets.compare_digest(submitted.password, forbidden)
+        for forbidden in {"student123", shared_password}
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="The shared read-only password cannot be used as a personal password.",
+        )
+
+    remote_ip = request_ip(request)
+    try:
+        database = get_supabase()
+        token_hash = hash_password_setup_token(submitted.password_setup_token)
+        request_id = reserve_auth_request(
+            database, f"setup:{token_hash}", remote_ip, "password_set"
+        )
+        password_hash = hash_credential(submitted.password)
+        response = database.rpc("consume_student_password_challenge", {
+            "p_token_hash": token_hash,
+            "p_password_hash": password_hash,
+        }).execute()
+        rows = response.data if isinstance(response.data, list) else []
+        updated = rows[0] if rows else None
+        if not updated:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="The password setup link is invalid or has expired.",
+            )
+        student = find_student_auth_record_by_index(database, updated["index_number"])
+        if not student:
+            raise HTTPException(status_code=401, detail="Student authentication is required.")
+        set_auth_request_outcome(database, request_id, "success")
+        return {
+            "access_mode": "editable",
+            "edit_token": issue_signed_token(
+                "edit",
+                student["index_number"],
+                30 * 60,
+                {"ver": updated["password_version"]},
+            ),
+            "index_number": student["index_number"],
+            "name": student["name"],
+        }
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.error("Personal password setup failed; error_type=%s", type(error).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to create the personal password. Please try again.",
+        ) from error
+
+
+@app.get("/api/student/auth/me")
+def get_authenticated_student(
+    student: dict[str, Any] = Depends(require_student_access),
+) -> dict[str, str]:
+    return {
+        "index_number": student["index_number"],
+        "name": student["name"],
+        "access_mode": student["access_mode"],
+    }
+
+
+@app.get("/api/student/writes/status")
+def get_student_write_status(
+    _: dict[str, Any] = Depends(require_student_access),
+) -> dict[str, bool]:
+    return {"enabled": student_writes_enabled()}
 
 
 @app.get("/api/student/record")
@@ -1136,6 +1449,75 @@ def get_student_record(
     except Exception as error:
         logger.error("Unable to load student record; error_type=%s", type(error).__name__)
         raise HTTPException(status_code=500, detail="Unable to load the student record.") from error
+
+
+@app.put("/api/student/preferences")
+def update_student_preferences(
+    submitted: StudentPreferencesUpdateInput,
+    student: dict[str, Any] = Depends(require_editable_student),
+) -> dict[str, Any]:
+    preferences = submitted.model_dump()
+    if sorted(preferences.values()) != list(range(1, len(BASE_QUOTAS) + 1)):
+        raise HTTPException(
+            status_code=422,
+            detail="Every department must have a unique rank from 1 to 10.",
+        )
+    payload = {
+        "index_number": student["index_number"],
+        **preferences,
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        response = get_supabase().table("student_preferences").upsert(
+            payload, on_conflict="index_number"
+        ).execute()
+        saved = response.data[0] if response.data else payload
+        return {"status": "success", "preferences": saved}
+    except Exception as error:
+        raise internal_server_exception(error) from error
+
+
+@app.patch("/api/student/results")
+def update_student_module_grades(
+    submitted: StudentGradeUpdateInput,
+    student: dict[str, Any] = Depends(require_editable_student),
+) -> dict[str, Any]:
+    submitted_grades = {
+        "fluids": submitted.fluids.strip().upper(),
+        "mechanics": submitted.mechanics.strip().upper(),
+    }
+    if any(grade not in GRADE_VALUES for grade in submitted_grades.values()):
+        raise HTTPException(status_code=422, detail="One or more grades are invalid.")
+    try:
+        database = get_supabase()
+        current = (
+            database.table("student_results")
+            .select("index_number,cse,electrical,fluids,maths,mechanics,material")
+            .eq("index_number", student["index_number"])
+            .maybe_single()
+            .execute()
+        )
+        if not current.data:
+            raise HTTPException(status_code=404, detail="Student results were not found.")
+        numeric_updates = {
+            subject: GRADE_VALUES[grade]
+            for subject, grade in submitted_grades.items()
+        }
+        merged = {**current.data, **numeric_updates}
+        numeric_updates["average_gpa"] = float(calculate_average_gpa(merged))
+        database.table("student_results").update(numeric_updates).eq(
+            "index_number", student["index_number"]
+        ).execute()
+        return {
+            "status": "success",
+            "average_gpa": numeric_updates["average_gpa"],
+        }
+    except HTTPException:
+        raise
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        raise internal_server_exception(error) from error
 
 
 @app.get("/api/cutoffs")
@@ -1405,12 +1787,65 @@ def update_admin_student_grades(
 
 @app.post("/api/correction-requests", status_code=status.HTTP_201_CREATED)
 def create_correction_request(
-    _: CorrectionRequestInput,
+    submitted: CorrectionRequestInput,
+    student: dict[str, Any] = Depends(require_editable_student),
 ) -> dict[str, Any]:
-    raise HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="Grade correction requests are currently under work. Please try again later.",
-    )
+    module = submitted.module.strip().lower()
+    grade = submitted.requested_grade.strip().upper()
+    index_number = student["index_number"]
+    if module not in CORRECTABLE_MODULES or grade not in GRADE_VALUES:
+        raise HTTPException(status_code=422, detail="Invalid module or requested grade.")
+
+    try:
+        database = get_supabase()
+        result = (
+            database.table("student_results")
+            .select(f"index_number,{module}")
+            .eq("index_number", index_number)
+            .maybe_single()
+            .execute()
+        )
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Student results were not found.")
+
+        existing = (
+            database.table("grade_correction_requests")
+            .select("id")
+            .eq("index_number", index_number)
+            .eq("module", module)
+            .eq("status", "pending")
+            .execute()
+        )
+        if existing.data:
+            raise HTTPException(
+                status_code=409,
+                detail="A pending request already exists for this module.",
+            )
+
+        payload = {
+            "index_number": index_number,
+            "module": module,
+            "current_grade": grade_label(result.data.get(module)),
+            "requested_grade": grade,
+            "status": "pending",
+        }
+        try:
+            created = database.table("grade_correction_requests").insert(payload).execute()
+        except Exception as error:
+            if not is_legacy_numeric_grade_error(error):
+                raise
+            payload["current_grade"] = result.data.get(module)
+            created = database.table("grade_correction_requests").insert(payload).execute()
+        created_request = dict(created.data[0]) if created.data else None
+        if created_request:
+            created_request["current_grade"] = normalize_grade_label(
+                created_request.get("current_grade")
+            )
+        return {"status": "success", "request": created_request}
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise internal_server_exception(error) from error
 
 
 @app.get("/api/admin/correction-requests")
