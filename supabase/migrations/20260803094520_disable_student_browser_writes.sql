@@ -44,7 +44,7 @@ set search_path = pg_catalog, public
 as $$
 declare
   request_id bigint;
-  current_time timestamptz := now();
+  v_now timestamptz := now();
 begin
   if p_request_type not in ('login', 'admin_login') then
     raise exception 'Invalid authentication request type.';
@@ -53,18 +53,18 @@ begin
   perform pg_advisory_xact_lock(72150420260802);
 
   delete from public.student_auth_requests
-  where created_at < current_time - interval '7 days';
+  where created_at < v_now - interval '7 days';
 
   if (select count(*) from public.student_auth_requests
       where request_type = p_request_type
         and index_hash = p_index_hash
         and ip_hash = p_ip_hash
         and outcome = 'failed'
-        and created_at >= current_time - interval '15 minutes') >= 5
+        and created_at >= v_now - interval '15 minutes') >= 5
     or (select count(*) from public.student_auth_requests
         where request_type = p_request_type
           and ip_hash = p_ip_hash
-          and created_at >= current_time - interval '1 hour') >= 20 then
+          and created_at >= v_now - interval '1 hour') >= 20 then
     raise exception 'AUTH_RATE_LIMIT' using errcode = 'P0001';
   end if;
 
