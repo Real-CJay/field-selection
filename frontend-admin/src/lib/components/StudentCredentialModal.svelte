@@ -151,6 +151,9 @@
             ? 'Enter your permanent 16-digit recovery code to reset your personal password.'
             : 'Enter the permanent 16-digit recovery code provided to you to create your personal password.'}
         </p>
+        <p class="recovery-help">
+          If you do not have access to your recovery code, please ask your E-Group representative for it.
+        </p>
         <div class="field">
           <label for="student-recovery-code">Recovery code</label>
           <input class="input" id="student-recovery-code" bind:value={recoveryCode} inputmode="numeric" autocomplete="one-time-code" placeholder="1234-5678-9012-3456" />
@@ -185,6 +188,7 @@
   .auth-modal { width: min(100%, 470px); }
   .auth-action, .cancel { width: 100%; margin-top: 14px; }
   .field { margin-top: 16px; }
+  .recovery-help { margin: 16px 0 0; padding: 14px 16px; border: 2px solid #d97706; border-radius: 8px; background: #fffbeb; color: #78350f; font-size: 1rem; font-weight: 700; line-height: 1.45; }
   .remember { color: #374151; font-size: 0.9rem; }
   .link-button { width: 100%; margin-top: 14px; border: 0; background: transparent; color: #1d4ed8; cursor: pointer; text-decoration: underline; }
   code { font-size: 0.9em; }
