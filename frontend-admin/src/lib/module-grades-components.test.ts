@@ -55,6 +55,7 @@ describe('student flow', () => {
 
     expect(body).toContain('16-digit recovery code');
     expect(body).toContain('create your personal password');
+    expect(body).toContain('please ask your E-Group representative for it');
     expect(body).not.toContain('Use personal password');
   });
 
